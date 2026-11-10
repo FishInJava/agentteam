@@ -264,7 +264,7 @@ export async function init(flags = {}) {
     // can never clobber user hooks/permissions/env.
     const merged = mergeExistingHookConfigs(cwd, platformFiles);
     for (const warning of merged.warnings) {
-      console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
+      console.warn(`  warn: ${warning}`);
     }
   }
 

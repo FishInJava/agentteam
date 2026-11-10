@@ -5,12 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolvePythonCommand } from "../src/lib/python.js";
+import { resolvePythonCommand, splitCommand } from "../src/lib/python.js";
 import { readTemplateDir, walkFiles } from "../src/lib/fsutil.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const BIN = path.join(PACKAGE_ROOT, "bin", "ateam.js");
-const PY = resolvePythonCommand().split(" ");
+const PY_CMD = resolvePythonCommand();
+const PY = splitCommand(PY_CMD);
 
 const tempDirs = [];
 function mkTemp() {
@@ -712,9 +713,10 @@ try {
     JSON.stringify(countersAfter) === JSON.stringify({ fact: 0, intent: 0, acceptance: 0, hint: 0 }),
     `counters not reset after project init --force: ${JSON.stringify(countersAfter)}`,
   );
+  const recreatedFacts = fs.readdirSync(path.join(archiveDir, ".ateam/board/facts"));
   assert(
-    fs.readdirSync(path.join(archiveDir, ".ateam/board/facts")).length === 0,
-    "facts dir was not recreated empty",
+    JSON.stringify(recreatedFacts) === JSON.stringify([".gitkeep"]),
+    `facts dir was not recreated empty with .gitkeep: ${recreatedFacts.join(", ")}`,
   );
   const archiveSummary = pyIn(archiveDir, [boardPy, "summary"]);
   assert(
@@ -728,6 +730,328 @@ try {
     nextFactAfterArchive === "f001",
     `next fact id after archive was ${nextFactAfterArchive}, expected f001`,
   );
+
+  // ==========================================================================
+  // Batch 2 (mission i004): eliminate silent failures.
+  // ==========================================================================
+
+  // A7: splitCommand handles multi-word Python commands ("py -3").
+  assert(
+    JSON.stringify(splitCommand("py -3")) === JSON.stringify(["py", "-3"]),
+    `splitCommand('py -3') -> ${JSON.stringify(splitCommand("py -3"))}`,
+  );
+  assert(
+    JSON.stringify(splitCommand("  python   -X  ")) === JSON.stringify(["python", "-X"]),
+    "splitCommand did not collapse surrounding/repeated whitespace",
+  );
+
+  // A7: context runs the resolved command and prints the board summary / JSON.
+  const contextOut = runAteem(tmp, ["context"]);
+  assert(contextOut.includes("Smoke"), "context output missing the project title");
+  assert(contextOut.includes("Phase: recon"), "context output missing the board summary");
+  const parsedContext = JSON.parse(runAteem(tmp, ["context", "--json"]));
+  assert(
+    parsedContext.project && parsedContext.project.title === "Smoke",
+    "context --json did not return the project",
+  );
+
+  // A16: raw templates carry the placeholder; installed files carry the command.
+  const rawMarkdown = walkFiles(path.join(PACKAGE_ROOT, "templates"))
+    .filter((full) => full.endsWith(".md"))
+    .map((full) => ({ full, text: fs.readFileSync(full, "utf8") }));
+  const rawPythonLeaks = rawMarkdown.filter(({ text }) => text.includes("python .ateam/scripts"));
+  assert(
+    rawPythonLeaks.length === 0,
+    `raw templates still contain "python .ateam/scripts": ${rawPythonLeaks
+      .map(({ full }) => path.relative(PACKAGE_ROOT, full).split(path.sep).join("/"))
+      .join(", ")}`,
+  );
+  const installedWorkflowText = fs.readFileSync(path.join(tmp, ".ateam/workflow.md"), "utf8");
+  assert(!installedWorkflowText.includes("{{PYTHON_CMD}}"), "installed workflow.md kept {{PYTHON_CMD}}");
+  assert(
+    installedWorkflowText.includes(`${PY_CMD} .ateam/scripts/board.py`),
+    "installed workflow.md missing the resolved Python command",
+  );
+  const installedStartSkill = fs.readFileSync(path.join(tmp, ".agents/skills/ateam-start/SKILL.md"), "utf8");
+  assert(!installedStartSkill.includes("{{PYTHON_CMD}}"), "installed skill kept {{PYTHON_CMD}}");
+  assert(
+    installedStartSkill.includes(`${PY_CMD} .ateam/scripts/get_context.py`),
+    "installed skill missing the resolved Python command",
+  );
+
+  // A3: update refuses directories/symlinks before any write, --force included.
+  const updateBlockedDir = mkTemp();
+  runAteem(updateBlockedDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  const updateBlockedTarget = path.join(updateBlockedDir, ".ateam/workflow.md");
+  fs.rmSync(updateBlockedTarget);
+  fs.mkdirSync(updateBlockedTarget);
+  fs.writeFileSync(path.join(updateBlockedTarget, "inner.txt"), "user data\n");
+  const updateBlockedFiles = listFiles(updateBlockedDir);
+  const updateVersionBefore = fs.readFileSync(path.join(updateBlockedDir, ".ateam/.version"), "utf8");
+
+  for (const args of [["update"], ["update", "--force"]]) {
+    const blocked = runAteemResult(updateBlockedDir, args);
+    assert(blocked.status !== 0, `${args.join(" ")} with a directory target exited ${blocked.status}`);
+    const blockedErr = String(blocked.stderr || "");
+    assert(
+      blockedErr.includes("ateam update stopped — 1 path(s) are not regular files:"),
+      `${args.join(" ")} stop message missing or misspelled:\n${blockedErr}`,
+    );
+    assert(blockedErr.includes(".ateam/workflow.md"), `${args.join(" ")} stop list missing the path`);
+    assert(blockedErr.includes("No files were written."), `${args.join(" ")} missing the zero-write line`);
+    assert(/move|remove/i.test(blockedErr), `${args.join(" ")} does not say to move/remove`);
+    assert(
+      JSON.stringify(listFiles(updateBlockedDir)) === JSON.stringify(updateBlockedFiles),
+      `${args.join(" ")} wrote files despite a non-regular target`,
+    );
+    assert(
+      fs.readFileSync(path.join(updateBlockedDir, ".ateam/.version"), "utf8") === updateVersionBefore,
+      `${args.join(" ")} rewrote .version despite aborting`,
+    );
+    assert(
+      !listFiles(updateBlockedDir).some((rel) => rel.includes(".tmp")),
+      `${args.join(" ")} left .tmp debris`,
+    );
+  }
+
+  // Symlink target (the preflight must abort without following the link).
+  try {
+    const symlinkDir = mkTemp();
+    runAteem(symlinkDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+    const symlinkConfig = path.join(symlinkDir, ".ateam/config.json");
+    const outsideConfig = path.join(symlinkDir, "outside-config.json");
+    fs.writeFileSync(outsideConfig, '{ "user": true }\n');
+    fs.rmSync(symlinkConfig);
+    fs.symlinkSync(outsideConfig, symlinkConfig, "file");
+    const outsideBytes = fs.readFileSync(outsideConfig);
+    const symlinkUpdate = runAteemResult(symlinkDir, ["update", "--force"]);
+    assert(symlinkUpdate.status !== 0, `update --force over a symlink exited ${symlinkUpdate.status}`);
+    assert(
+      String(symlinkUpdate.stderr).includes("not regular files"),
+      "update --force over a symlink did not report the non-regular stop",
+    );
+    assert(
+      fs.readFileSync(outsideConfig).equals(outsideBytes),
+      "update followed and wrote through a symlink",
+    );
+  } catch (error) {
+    if (["EPERM", "EACCES", "UNKNOWN", "ENOSYS"].includes(error.code)) {
+      console.log(`smoke: note: symlink preflight check skipped (${error.code})`);
+    } else {
+      throw error;
+    }
+  }
+
+  // A8: handover placeholder detection ignores bare "TODO" in real handovers.
+  const handoverDir = mkTemp();
+  runAteem(handoverDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  const hookRun = (dir) =>
+    spawnSync(PY[0], [...PY.slice(1), ".ateam/scripts/hook_session_start.py"], {
+      cwd: dir,
+      input: "{}",
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  const placeholderHook = hookRun(handoverDir);
+  assert(placeholderHook.status === 0, `session-start hook exited ${placeholderHook.status}`);
+  const placeholderContext = JSON.parse(placeholderHook.stdout).hookSpecificOutput.additionalContext;
+  assert(
+    !placeholderContext.includes("## Handover (previous Leader)"),
+    "placeholder handover template was injected",
+  );
+  fs.writeFileSync(
+    path.join(handoverDir, ".ateam/workspace/handover.md"),
+    "# Handover\n\nDone: shipped the batch.\n\nTODO: fix X in the next session.\n\nNext: continue.\n",
+  );
+  const realHook = hookRun(handoverDir);
+  assert(realHook.status === 0, `session-start hook with real handover exited ${realHook.status}`);
+  const realContext = JSON.parse(realHook.stdout).hookSpecificOutput.additionalContext;
+  assert(realContext.includes("## Handover (previous Leader)"), "real handover was not injected");
+  assert(realContext.includes("TODO: fix X"), "real handover containing TODO was dropped");
+
+  // A9: unsupported array-shaped hooks are warned about and left untouched.
+  const hooksArrayDir = mkTemp();
+  runAteem(hooksArrayDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  const arrayClaudePath = path.join(hooksArrayDir, ".claude/settings.json");
+  fs.writeFileSync(
+    arrayClaudePath,
+    `${JSON.stringify({
+      hooks: [{ matcher: "x", hooks: [{ type: "command", command: "echo user-array" }] }],
+      userMarker: true,
+    }, null, 2)}\n`,
+  );
+  const arrayBytes = fs.readFileSync(arrayClaudePath);
+  const arrayUpdate = runAteemResult(hooksArrayDir, ["update"]);
+  assert(arrayUpdate.status === 0, `update with array hooks exited ${arrayUpdate.status}`);
+  assert(
+    String(arrayUpdate.stderr).includes(
+      "warn: unsupported hooks shape (array) in .claude/settings.json; left untouched",
+    ),
+    `array-shape warning missing:\n${arrayUpdate.stderr}`,
+  );
+  assert(fs.readFileSync(arrayClaudePath).equals(arrayBytes), "array-shaped hooks file was modified");
+
+  // A9: same command with a different matcher is a distinct entry; env merges.
+  const mergeDir = mkTemp();
+  runAteem(mergeDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  const mergeClaudePath = path.join(mergeDir, ".claude/settings.json");
+  const sessionCommand = `${PY_CMD} .ateam/scripts/hook_session_start.py`;
+  fs.writeFileSync(
+    mergeClaudePath,
+    `${JSON.stringify({
+      env: { USER_KEY: "keep-me" },
+      hooks: {
+        SessionStart: [
+          { matcher: "custom", hooks: [{ type: "command", command: sessionCommand }] },
+        ],
+      },
+    }, null, 2)}\n`,
+  );
+  const mergeUpdate = runAteemResult(mergeDir, ["update"]);
+  assert(mergeUpdate.status === 0, `matcher/env update exited ${mergeUpdate.status}`);
+  const mergedSettings = JSON.parse(fs.readFileSync(mergeClaudePath, "utf8"));
+  const matchers = mergedSettings.hooks.SessionStart.map((entry) => entry.matcher).sort();
+  assert(
+    JSON.stringify(matchers) === JSON.stringify(["clear", "compact", "custom", "startup"]),
+    `same command with a different matcher was dropped or duplicated: ${JSON.stringify(matchers)}`,
+  );
+  assert(
+    mergedSettings.hooks.SessionStart.filter((entry) =>
+      (entry.hooks || []).some((hook) => hook.command === sessionCommand),
+    ).length === 4,
+    "session-start entries with the same command were not all kept",
+  );
+  assert(mergedSettings.env.USER_KEY === "keep-me", "merge dropped an existing env key");
+  assert(
+    mergedSettings.env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR === "1",
+    "merge did not add a missing incoming env key",
+  );
+
+  // Existing env values win over incoming ones.
+  const existingEnvSettings = JSON.parse(fs.readFileSync(mergeClaudePath, "utf8"));
+  existingEnvSettings.env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = "mine";
+  fs.writeFileSync(mergeClaudePath, `${JSON.stringify(existingEnvSettings, null, 2)}\n`);
+  runAteem(mergeDir, ["update"]);
+  assert(
+    JSON.parse(fs.readFileSync(mergeClaudePath, "utf8")).env
+      .CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR === "mine",
+    "merge overwrote an existing env value",
+  );
+
+  // A9: a no-op merge leaves a 4-space file byte-for-byte untouched.
+  const noopDir = mkTemp();
+  runAteem(noopDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  const noopClaudePath = path.join(noopDir, ".claude/settings.json");
+  const noopParsed = JSON.parse(fs.readFileSync(noopClaudePath, "utf8"));
+  fs.writeFileSync(noopClaudePath, `${JSON.stringify(noopParsed, null, 4)}\n`);
+  const noopBytes = fs.readFileSync(noopClaudePath);
+  const noopUpdate = runAteemResult(noopDir, ["update"]);
+  assert(noopUpdate.status === 0, `no-op update exited ${noopUpdate.status}`);
+  assert(
+    fs.readFileSync(noopClaudePath).equals(noopBytes),
+    "no-op merge reformatted/re-wrote .claude/settings.json",
+  );
+
+  // A12: unknown/misspelled flags abort before the command runs.
+  const flagDir = mkTemp();
+  const typoInit = runAteemResult(flagDir, [
+    "init", "--platform", "agents", "--user", "smoketest", "--keep-existng",
+  ]);
+  assert(typoInit.status === 1, `misspelled init flag exited ${typoInit.status}, expected 1`);
+  assert(
+    String(typoInit.stderr).includes("unknown option --keep-existng"),
+    `misspelled init flag error missing:\n${typoInit.stderr}`,
+  );
+  assert(fs.readdirSync(flagDir).length === 0, "misspelled init flag wrote files");
+  for (const args of [["update", "--forc"], ["context", "--jsn"]]) {
+    const unknown = runAteemResult(flagDir, args);
+    assert(unknown.status === 1, `${args.join(" ")} exited ${unknown.status}, expected 1`);
+    assert(
+      String(unknown.stderr).includes(`unknown option --${args[1].slice(2)}`),
+      `${args.join(" ")} did not report the unknown option`,
+    );
+  }
+  const spelledInit = runAteemResult(flagDir, [
+    "init", "--platform", "agents", "--user", "smoketest", "--keep-existing",
+  ]);
+  assert(spelledInit.status === 0, `correctly spelled --keep-existing exited ${spelledInit.status}`);
+  assert(fs.existsSync(path.join(flagDir, ".ateam/workflow.md")), "correctly spelled init wrote nothing");
+
+  // A6: corrupt JSON warns on stderr but still returns the default.
+  const corruptDir = mkTemp();
+  runAteem(corruptDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  const corruptProject = path.join(corruptDir, ".ateam/board/project.json");
+  fs.writeFileSync(corruptProject, "{ this is not json\n");
+  const corruptSummary = pyInResult(corruptDir, [boardPy, "summary"]);
+  assert(corruptSummary.status === 0, `summary with corrupt project.json exited ${corruptSummary.status}`);
+  assert(
+    String(corruptSummary.stderr).includes("warn: cannot parse"),
+    `corrupt project.json did not warn:\n${corruptSummary.stderr}`,
+  );
+  assert(
+    String(corruptSummary.stdout).includes("no project yet"),
+    "corrupt project.json did not fall back to the default",
+  );
+  fs.writeFileSync(corruptProject, `${JSON.stringify({ id: "p1", title: "Healthy", phase: "recon" })}\n`);
+  const healthySummary = pyInResult(corruptDir, [boardPy, "summary"]);
+  assert(healthySummary.status === 0, `healthy summary exited ${healthySummary.status}`);
+  assert(
+    !String(healthySummary.stderr).includes("warn"),
+    `healthy summary emitted a warning: ${healthySummary.stderr}`,
+  );
+
+  // A5: entity listing sorts by numeric id suffix, grouped per prefix.
+  const sortDir = mkTemp();
+  runAteem(sortDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  pyIn(sortDir, [boardPy, "project", "init", "--title", "Sorting", "--origin", "x", "--goal", "y"]);
+  for (const id of ["f1000", "f2", "f999", "f10"]) {
+    fs.writeFileSync(
+      path.join(sortDir, `.ateam/board/facts/${id}.json`),
+      `${JSON.stringify({ id, title: id, description: "d", kind: "note" })}\n`,
+    );
+  }
+  const sortedFacts = JSON.parse(pyIn(sortDir, [boardPy, "fact", "list", "--json"]));
+  const sortedIds = sortedFacts.map((fact) => fact.id);
+  assert(
+    JSON.stringify(sortedIds) === JSON.stringify(["f2", "f10", "f999", "f1000"]),
+    `facts not sorted numerically: ${JSON.stringify(sortedIds)}`,
+  );
+
+  // A5: a same-second archive collision gets -1, never nested directories.
+  const archiveCollisionScript = [
+    "import datetime as dt",
+    "import sys",
+    'sys.path.insert(0, ".ateam/scripts")',
+    "import board",
+    "class FixedDT(dt.datetime):",
+    "    @classmethod",
+    "    def now(cls, tz=None):",
+    "        return dt.datetime(2024, 1, 1, 0, 0, 0)",
+    "board.datetime = FixedDT",
+    "ateam = board.common.ateam_dir_from_script()",
+    "board._archive_previous_board(ateam)",
+    "board._archive_previous_board(ateam)",
+  ].join("\n");
+  const collisionRun = pyInResult(sortDir, ["-c", archiveCollisionScript]);
+  assert(collisionRun.status === 0, `archive collision script failed:\n${collisionRun.stderr}`);
+  const collisionRoot = path.join(sortDir, ".ateam/workspace/archive");
+  const firstCollision = path.join(collisionRoot, "20240101-000000");
+  const secondCollision = path.join(collisionRoot, "20240101-000000-1");
+  assert(fs.existsSync(firstCollision), "first archive stamp missing");
+  assert(fs.existsSync(secondCollision), "same-second archive was not suffixed with -1");
+  assert(fs.existsSync(path.join(firstCollision, "facts")), "first archive missing facts");
+  assert(fs.existsSync(path.join(secondCollision, "facts")), "second archive missing facts");
+  assert(
+    !fs.existsSync(path.join(firstCollision, "facts", "facts")),
+    "same-second archive nested the entity directory",
+  );
+  for (const name of ["facts", "intents", "acceptance", "hints"]) {
+    const recreated = fs.readdirSync(path.join(sortDir, `.ateam/board/${name}`));
+    assert(
+      JSON.stringify(recreated) === JSON.stringify([".gitkeep"]),
+      `board/${name} was not recreated with .gitkeep after archiving: ${recreated.join(", ")}`,
+    );
+  }
 
   console.log("smoke: PASS");
 } finally {

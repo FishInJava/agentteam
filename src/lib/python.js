@@ -18,3 +18,11 @@ export function resolvePythonCommand() {
   }
   return "python3";
 }
+
+/** Split a command string into argv parts: "py -3" -> ["py", "-3"]. */
+export function splitCommand(cmd) {
+  return String(cmd || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}

@@ -8,7 +8,7 @@ description: "Resumes the active ateam Leader loop: reloads the board summary an
 1. Reload the board:
 
 ```bash
-python .ateam/scripts/get_context.py
+{{PYTHON_CMD}} .ateam/scripts/get_context.py
 ```
 
 2. Read the Leader's own memory:
@@ -25,5 +25,5 @@ python .ateam/scripts/get_context.py
    passed, stop dispatching new work and enter endgame.
 
 ```bash
-python .ateam/scripts/board.py summary
+{{PYTHON_CMD}} .ateam/scripts/board.py summary
 ```

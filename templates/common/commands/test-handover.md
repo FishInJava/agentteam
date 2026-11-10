@@ -7,7 +7,7 @@ Write the Leader handover **immediately** — no subagents, do it yourself. The 
 invoke this manually at any time; the Leader must also run the same steps unprompted
 when its own context reaches ~85%.
 
-1. `python .ateam/scripts/get_context.py` — read the live board summary.
+1. `{{PYTHON_CMD}} .ateam/scripts/get_context.py` — read the live board summary.
 2. Read `.ateam/workspace/leader-state.json` (phase, next_action, decisions).
 3. Compose the handover, concretely (no vague one-liners):
    - **done**: intents closed this session + acceptance rows verified, citing ids (i00x / a00x / f00x)
@@ -17,7 +17,7 @@ when its own context reaches ~85%.
    - **worker state**: dispatched workers still running; if dead, what to salvage and how
    - **budget**: consumption so far (tokens/seconds) vs budget; acceptance progress X/Y
 4. Write it via:
-   `python .ateam/scripts/board.py handover write --phase <current> --next-action "<...>" --decisions "<a|b|c>" --notes "<full handover text>"`
+   `{{PYTHON_CMD}} .ateam/scripts/board.py handover write --phase <current> --next-action "<...>" --decisions "<a|b|c>" --notes "<full handover text>"`
 5. Report back to the user:
    - handover written (path: `.ateam/workspace/handover.md`)
    - estimated current context usage (%)

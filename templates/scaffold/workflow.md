@@ -28,37 +28,37 @@
 
 ```bash
 # 项目（一个需求一张图）
-python .ateam/scripts/board.py project init --title "<需求名>" --origin "<Spec 概要>" --goal "<完成定义>"
-python .ateam/scripts/board.py project phase --phase recon|implement|verify|endgame|blocked|done --next-action "..."
-python .ateam/scripts/board.py project show
+{{PYTHON_CMD}} .ateam/scripts/board.py project init --title "<需求名>" --origin "<Spec 概要>" --goal "<完成定义>"
+{{PYTHON_CMD}} .ateam/scripts/board.py project phase --phase recon|implement|verify|endgame|blocked|done --next-action "..."
+{{PYTHON_CMD}} .ateam/scripts/board.py project show
 
 # fact（已确认客观发现，三层：title/description/doc）
-python .ateam/scripts/board.py fact add --title "..." --description "..." --kind codebase|module|test|decision|lesson|blocker|note --doc "path"
-python .ateam/scripts/board.py fact list
+{{PYTHON_CMD}} .ateam/scripts/board.py fact add --title "..." --description "..." --kind codebase|module|test|decision|lesson|blocker|note --doc "path"
+{{PYTHON_CMD}} .ateam/scripts/board.py fact list
 
 # intent（工作项；纯 Leader 侧，Worker 不见）
-python .ateam/scripts/board.py intent add --from f001,f002 --description "..." --task-type recon|implement|fix|verify|chore|distill --angle "..." --acceptance "a|b"
-python .ateam/scripts/board.py intent dispatch i001 --worker w1
-python .ateam/scripts/board.py intent status i001 --status done --to-fact f003
+{{PYTHON_CMD}} .ateam/scripts/board.py intent add --from f001,f002 --description "..." --task-type recon|implement|fix|verify|chore|distill --angle "..." --acceptance "a|b"
+{{PYTHON_CMD}} .ateam/scripts/board.py intent dispatch i001 --worker w1
+{{PYTHON_CMD}} .ateam/scripts/board.py intent status i001 --status done --to-fact f003
 
 # mission 渲染（把 intent + 相关 fact 渲染成任务书，不含板子本身）
-python .ateam/scripts/board.py mission render i001
+{{PYTHON_CMD}} .ateam/scripts/board.py mission render i001
 
 # report 回写（Worker 返回 JSON 后）
-python .ateam/scripts/board.py report ingest --file report.json
+{{PYTHON_CMD}} .ateam/scripts/board.py report ingest --file report.json
 
 # 验收台账
-python .ateam/scripts/board.py acceptance add --criterion "..." --source "Spec §2"
-python .ateam/scripts/board.py acceptance verify a001 --evidence-fact f005 --by verify-worker
-python .ateam/scripts/board.py acceptance status a001 --status failed|waived|submitted --pr "URL"
+{{PYTHON_CMD}} .ateam/scripts/board.py acceptance add --criterion "..." --source "Spec §2"
+{{PYTHON_CMD}} .ateam/scripts/board.py acceptance verify a001 --evidence-fact f005 --by verify-worker
+{{PYTHON_CMD}} .ateam/scripts/board.py acceptance status a001 --status failed|waived|submitted --pr "URL"
 
 # 人类纠偏 / Leader 自身记忆 / 消耗台账
-python .ateam/scripts/board.py hint add --content "..."
-python .ateam/scripts/board.py handover write --phase implement --next-action "..." --decisions "a|b" --notes "..."
-python .ateam/scripts/board.py consumption add --intent i001 --tokens-in 1000 --tokens-out 500 --seconds 120
+{{PYTHON_CMD}} .ateam/scripts/board.py hint add --content "..."
+{{PYTHON_CMD}} .ateam/scripts/board.py handover write --phase implement --next-action "..." --decisions "a|b" --notes "..."
+{{PYTHON_CMD}} .ateam/scripts/board.py consumption add --intent i001 --tokens-in 1000 --tokens-out 500 --seconds 120
 
 # 看板摘要
-python .ateam/scripts/board.py summary
+{{PYTHON_CMD}} .ateam/scripts/board.py summary
 ```
 
 ## 主循环（OODA）

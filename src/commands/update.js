@@ -19,6 +19,44 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json
 const PATH_LIST_LIMIT = 20;
 
 /**
+ * Existing targets that cannot be safely replaced in place: directories,
+ * symlinks, and unreadable files. Checked with lstat before any merge or
+ * write so `update` (even --force) can abort without a partial update.
+ */
+function findNonRegularTargets(cwd, desired) {
+  const nonRegular = [];
+  for (const rel of desired.keys()) {
+    const target = path.join(cwd, ...rel.split("/"));
+    let stat;
+    try {
+      stat = fs.lstatSync(target);
+    } catch (error) {
+      // Absent is fine; anything else (EACCES, EPERM, ...) is unreadable.
+      if (error && error.code !== "ENOENT") nonRegular.push(rel);
+      continue;
+    }
+    if (!stat.isFile()) {
+      nonRegular.push(rel);
+      continue;
+    }
+    try {
+      fs.accessSync(target, fs.constants.R_OK);
+    } catch {
+      nonRegular.push(rel);
+    }
+  }
+  return nonRegular;
+}
+
+/** Print a capped, one-per-line list of paths to stderr. */
+function printNonRegularList(paths) {
+  for (const rel of paths.slice(0, PATH_LIST_LIMIT)) console.error(`    - ${rel}`);
+  if (paths.length > PATH_LIST_LIMIT) {
+    console.error(`    ... and ${paths.length - PATH_LIST_LIMIT} more`);
+  }
+}
+
+/**
  * Platforms `update` should refresh.
  * - Persisted selection wins (an empty array is deliberate: generic core only).
  * - Corrupt selection falls back to detection instead of failing the upgrade;
@@ -57,9 +95,25 @@ export async function update(flags = {}) {
   const desired = new Map([...scaffold, ...collectPlatformFiles(platforms, vars)]);
   const hashes = loadHashes(cwd);
 
+  // Preflight before ANY write (host hook merge included): a directory,
+  // symlink, or unreadable target cannot be atomically replaced, so refuse
+  // the whole update rather than fail halfway through.
+  const nonRegular = findNonRegularTargets(cwd, desired);
+  if (nonRegular.length) {
+    console.error(`ateam update stopped — ${nonRegular.length} path(s) are not regular files:`);
+    printNonRegularList(nonRegular);
+    console.error("");
+    console.error("No files were written.");
+    console.error(
+      "  move or remove these paths out of the way and re-run `ateam update` (--force cannot overwrite them).",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const merged = mergeExistingHookConfigs(cwd, desired);
   for (const warning of merged.warnings) {
-    console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
+    console.warn(`  warn: ${warning}`);
   }
   // Host hook configs are merge-only, even under --force: after the merge
   // attempt, drop every on-disk host config from the desired set so a failed

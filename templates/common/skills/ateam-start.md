@@ -13,14 +13,14 @@ You are the Leader of an ateam project. Read the board, decide, dispatch workers
 1. Print the board summary (use the SessionStart-injected copy if present):
 
 ```bash
-python .ateam/scripts/get_context.py
+{{PYTHON_CMD}} .ateam/scripts/get_context.py
 ```
 
 2. If there is no project yet, ask the human for the requirement Spec + acceptance
    criteria, then create the board:
 
 ```bash
-python .ateam/scripts/board.py project init \
+{{PYTHON_CMD}} .ateam/scripts/board.py project init \
   --title "<requirement>" --origin "<spec summary>" --goal "<done definition>"
 ```
 

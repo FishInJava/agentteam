@@ -39,7 +39,10 @@ def ateam_dir_from_script() -> Path:
 def read_json(path: Path, default: Any = None) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except FileNotFoundError:
+        return default
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        print(f"warn: cannot parse {path}: {exc}", file=sys.stderr)
         return default
 
 
@@ -121,11 +124,23 @@ def load_leader_state(ateam: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_ENTITY_ID_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
+
+
+def _entity_sort_key(path: Path) -> tuple:
+    """Sort by alpha prefix, then by the numeric ID suffix (f1000 after f999)."""
+    stem = path.stem
+    match = _ENTITY_ID_RE.match(stem)
+    if match:
+        return (match.group(1), int(match.group(2)), stem)
+    return (stem, -1, stem)
+
+
 def list_entities(ateam: Path, kind: str) -> list:
     directory = board_dir(ateam) / kind
     items = []
     if directory.is_dir():
-        for path in sorted(directory.glob("*.json")):
+        for path in sorted(directory.glob("*.json"), key=_entity_sort_key):
             data = read_json(path, None)
             if isinstance(data, dict):
                 items.append(data)

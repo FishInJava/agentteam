@@ -1,3 +1,4 @@
+<!-- ATEAM_HANDOVER_PLACEHOLDER -->
 # Leader 交接文档
 
 > 85% 压缩重启时，新 Leader 先读本文件，再读板子。

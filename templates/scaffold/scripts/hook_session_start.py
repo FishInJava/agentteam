@@ -20,9 +20,11 @@ import common
 PROJECT_ENV_VARS = ("QODER_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR", "ATEAM_PROJECT_DIR")
 
 # Placeholder handovers (fresh scaffold stubs) carry no real handoff content.
-# "TODO" is the generic placeholder marker; "（待写）" is what the scaffold's
-# workspace/handover.md template seeds every section with.
-HANDOVER_PLACEHOLDER_MARKERS = ("TODO", "（待写）")
+# The sentinel comment is seeded by the scaffold's workspace/handover.md;
+# "（待写）" is what its template puts in every section. A real handover may
+# legitimately mention "TODO" (e.g. "TODO: fix X"), so that is NOT a marker.
+HANDOVER_PLACEHOLDER_SENTINEL = "<!-- ATEAM_HANDOVER_PLACEHOLDER -->"
+HANDOVER_PLACEHOLDER_MARKERS = ("（待写）",)
 
 
 def _read_handover(ateam: Path) -> str:
@@ -31,7 +33,11 @@ def _read_handover(ateam: Path) -> str:
         content = common.handover_path(ateam).read_text(encoding="utf-8")
     except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError):
         return ""
-    if len(content.strip()) <= 20 or any(marker in content for marker in HANDOVER_PLACEHOLDER_MARKERS):
+    if (
+        HANDOVER_PLACEHOLDER_SENTINEL in content
+        or len(content.strip()) <= 20
+        or any(marker in content for marker in HANDOVER_PLACEHOLDER_MARKERS)
+    ):
         return ""
     return content.rstrip()
 

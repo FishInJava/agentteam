@@ -63,10 +63,21 @@ BOARD_ENTITY_DIRS = ("facts", "intents", "acceptance", "hints")
 ZERO_COUNTERS = {"fact": 0, "intent": 0, "acceptance": 0, "hint": 0}
 
 
+def _unique_archive_dir(ateam: Path, stamp: str) -> Path:
+    """A stamp directory that does not exist yet: same-second runs get -1, -2, ..."""
+    root = common.workspace_dir(ateam) / "archive"
+    archive = root / stamp
+    suffix = 1
+    while archive.exists():
+        archive = root / f"{stamp}-{suffix}"
+        suffix += 1
+    return archive
+
+
 def _archive_previous_board(ateam: Path) -> Path:
     """Move the previous requirement's graph aside before --force reinstalls."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    archive = common.workspace_dir(ateam) / "archive" / stamp
+    archive = _unique_archive_dir(ateam, stamp)
     archive.mkdir(parents=True, exist_ok=True)
 
     board = common.board_dir(ateam)
@@ -79,7 +90,11 @@ def _archive_previous_board(ateam: Path) -> Path:
         shutil.move(str(consumption), str(archive / "consumption.json"))
 
     for name in BOARD_ENTITY_DIRS:
-        (board / name).mkdir(parents=True, exist_ok=True)
+        directory = board / name
+        directory.mkdir(parents=True, exist_ok=True)
+        gitkeep = directory / ".gitkeep"
+        if not gitkeep.exists():
+            common.write_text(gitkeep, "")
     common.write_json(common.counters_path(ateam), dict(ZERO_COUNTERS))
 
     print(f"archived previous board -> {archive}")

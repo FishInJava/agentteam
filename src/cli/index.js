@@ -44,6 +44,27 @@ What it writes:
   .qoder/, .claude/, .codex/   per-platform integration for selected hosts
 `;
 
+/** Valid options per command; `_` (positionals) is always allowed. */
+const COMMAND_OPTIONS = {
+  init: new Set(["platform", "user", "force", "yes", "keep-existing"]),
+  update: new Set(["force"]),
+  context: new Set(["json"]),
+};
+
+/** Parse and validate flags before running the command; unknown flags abort. */
+function runWithFlags(cmd, command, args) {
+  const flags = parseFlags(args);
+  for (const key of Object.keys(flags)) {
+    if (key === "_") continue;
+    if (!COMMAND_OPTIONS[cmd].has(key)) {
+      console.error(`unknown option --${key}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+  return command(flags);
+}
+
 export async function main(argv) {
   const [cmd, ...rest] = argv;
   if (!cmd || cmd === "help" || cmd === "-h" || cmd === "--help") {
@@ -54,9 +75,9 @@ export async function main(argv) {
     console.log(pkg.version);
     return;
   }
-  if (cmd === "init") return init(parseFlags(rest));
-  if (cmd === "update") return update(parseFlags(rest));
-  if (cmd === "context") return context(parseFlags(rest));
+  if (cmd === "init") return runWithFlags("init", init, rest);
+  if (cmd === "update") return runWithFlags("update", update, rest);
+  if (cmd === "context") return runWithFlags("context", context, rest);
   throw new Error(`unknown command "${cmd}". Run: ateam help`);
 }
 
