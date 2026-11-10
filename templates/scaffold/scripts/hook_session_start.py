@@ -19,6 +19,22 @@ import common
 
 PROJECT_ENV_VARS = ("QODER_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR", "ATEAM_PROJECT_DIR")
 
+# Placeholder handovers (fresh scaffold stubs) carry no real handoff content.
+# "TODO" is the generic placeholder marker; "（待写）" is what the scaffold's
+# workspace/handover.md template seeds every section with.
+HANDOVER_PLACEHOLDER_MARKERS = ("TODO", "（待写）")
+
+
+def _read_handover(ateam: Path) -> str:
+    """Read the previous Leader's handover; return "" when absent or placeholder."""
+    try:
+        content = common.handover_path(ateam).read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError):
+        return ""
+    if len(content.strip()) <= 20 or any(marker in content for marker in HANDOVER_PLACEHOLDER_MARKERS):
+        return ""
+    return content.rstrip()
+
 
 def _project_root(payload: dict) -> Path:
     for var in PROJECT_ENV_VARS:
@@ -49,8 +65,11 @@ def main() -> int:
         "Canonical guide: .ateam/workflow.md. Board CLI: .ateam/scripts/board.py (Leader-only).\n"
         "You are the Leader: read the board, decide, dispatch workers. Never write code or run tests yourself.\n\n"
         + text
-        + "\n</ateam-session-context>"
     )
+    handover = _read_handover(ateam)
+    if handover:
+        context += f"\n\n## Handover (previous Leader)\n\n{handover}"
+    context += "\n</ateam-session-context>"
     result = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     print(json.dumps(result, ensure_ascii=False))
     return 0

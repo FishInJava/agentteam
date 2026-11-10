@@ -183,7 +183,8 @@ handbook { id, role_id, version, content, updated_at, updated_by }
 ```
 consumption { id, project_id, intent_id, worker, model, tokens_in, tokens_out,
               seconds, recorded_at }                 # 据 report 记账，Leader 汇总
-project.budget { total_tokens, total_seconds, deadline_at }
+project.budget { total_tokens, total_seconds, deadline_at, restart_budget }
+                  # restart_budget：watchdog 删除后已无消费者，board.py project init 仍兼容写入
 
 leader_state { project_id, phase, open_intents:[i###], next_action,
                recent_decisions:[...], handover_doc, updated_at }
