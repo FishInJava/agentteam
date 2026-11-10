@@ -126,6 +126,26 @@ ateam update
 完整板子命令（fact / intent / acceptance / hint / handover / consumption）见
 [.ateam/workflow.md 模板](templates/scaffold/workflow.md) 与 [docs/board-schema.md](docs/board-schema.md)。
 
+## 跨项目共享记忆
+
+记忆按「谁该知道」分两层，不要混：
+
+| 层 | 放哪里 | 共享范围 | 同步方式 |
+|---|---|---|---|
+| 全局规则 | 本仓库 `templates/scaffold/memory/*.md` | 所有 ateam 项目、所有 Leader 会话 | 改这里并 push GitHub；各项目 `ateam update` 拉取 |
+| 项目业务记忆 | 目标项目 `.ateam/memory/project-*.md` | 只该项目 | 随项目仓库提交；`ateam update` 不覆盖额外文件 |
+
+- 全局只放与业务无关的稳定规则：Leader / Worker 职责、派单、自主权、git 边界、报告落盘、
+  记忆治理、读取边界。
+- 业务相关的内容（领域术语、业务规则、客户约束、架构 / API / 数据契约、项目特定测试与发布
+  流程）留在项目里，用 `project-` 前缀避免与上游模板同名；不要上传到脚手架仓库。
+- SessionStart hook 按项目路径注入 `.ateam/memory/*.md`；宿主原生 Claude memory 只是本机缓存，
+  不是事实源。
+- Worker 不读记忆：与任务相关的业务规则由 Leader 写成 fact 注入 mission。
+
+同步已有项目：先更新本机 CLI（`git pull && npm link`，或 `npm install -g .`），再在各项目
+`ateam update`。项目级 `project-*.md` 不会被 update 改动。
+
 ## 同名文件与已有项目
 
 在已有项目里跑 `ateam init` 是常态，不需要先清空目录。默认策略是 **先预检、冲突即停**：

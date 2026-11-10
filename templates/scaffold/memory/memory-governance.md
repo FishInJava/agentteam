@@ -6,3 +6,15 @@
   需要删除时先提醒用户并说明候选与理由；用户没表态时，只能继续追加。
 - 更新顺序：先改仓库事实源（`templates/scaffold/memory/` 或 `docs/lessons.md`），再同步会话缓存。
 - 每次准备写记忆前先自检：这是长期规则吗？不写会导致重复犯错吗？不是就不写。
+
+## 全局 vs 项目级
+
+- **全局规则**（所有 ateam 项目共享）：Leader / Worker 行为与边界、派单、自主权、git 远端边界、
+  报告落盘、记忆治理、读取边界。写入本脚手架仓库 `templates/scaffold/memory/` 并 push 到
+  GitHub；各项目由 `ateam update` 拉取。不要把全局规则只写在某个项目的 `.ateam/memory/`。
+- **项目业务记忆**（只属于该项目）：领域术语、业务规则、客户约束、架构 / API / 数据契约、
+  项目特定测试与发布流程。写入目标项目 `.ateam/memory/project-*.md`（前缀避免与上游同名），
+  随项目仓库提交；不要上传到脚手架仓库。`ateam update` 不覆盖这类额外文件。
+- **宿主原生 memory**（如 `~/.claude/projects/<dir>/memory/`）是按目录隔离的本机缓存，
+  不作为事实源。
+- Worker 不读记忆：与任务相关的业务规则必须由 Leader 写成 fact / mission 注入。

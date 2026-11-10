@@ -30,6 +30,13 @@
 - Worker 无长期记忆是**设计**：只有 Leader 会话注入 memory；Worker 仍靠 mission 内嵌的 fact
   获取情报（规格注入而非记忆），不要顺手给 Worker 加记忆。
 
+### 记忆分层（2026-11-11 定）
+
+- 全局规则 → 本仓库 `templates/scaffold/memory/`，push GitHub，`init/update` 下发；
+  项目业务规则 → 目标项目 `.ateam/memory/project-*.md`，随项目仓库走，不上游。
+- 理由：不同项目的业务规则会冲突；脚手架仓库只应存放跨项目稳定的行为准则。
+- 验证：w4 实测 `project-demo.md` 在 `ateam update` 后字节不变，且上游模板不含该文件。
+
 ## 2026-11-10 晚 — smoke 封闭性（宿主 PROJECT_DIR 环境泄漏）
 
 ### 根因
