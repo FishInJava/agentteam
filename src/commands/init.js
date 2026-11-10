@@ -35,13 +35,40 @@ const PROTECTED = PROTECTED_PATHS;
 
 const PATH_LIST_LIMIT = 20;
 
+/** Capped, one-per-line path entries (shared by stdout and stderr listings). */
+function cappedPathLines(paths) {
+  const lines = paths.slice(0, PATH_LIST_LIMIT).map((rel) => `    - ${rel}`);
+  if (paths.length > PATH_LIST_LIMIT) {
+    lines.push(`    ... and ${paths.length - PATH_LIST_LIMIT} more`);
+  }
+  return lines;
+}
+
 /** Print a capped, one-per-line list of repo-relative paths. */
 function printPathList(label, paths) {
   if (!paths.length) return;
   console.log(`  ${label}: ${paths.length}`);
-  for (const rel of paths.slice(0, PATH_LIST_LIMIT)) console.log(`    - ${rel}`);
-  if (paths.length > PATH_LIST_LIMIT) {
-    console.log(`    ... and ${paths.length - PATH_LIST_LIMIT} more`);
+  for (const line of cappedPathLines(paths)) console.log(line);
+}
+
+/**
+ * Compare a target against the bytes this run would write.
+ * Returns "absent" | "same" | "different". Anything that exists but is not a
+ * regular file (directory, symlink, device, unreadable) counts as "different"
+ * so a preflight stop happens before init ever tries to write over it.
+ */
+function compareTarget(target, content) {
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return "absent";
+  }
+  if (!stat.isFile()) return "different";
+  try {
+    return fs.readFileSync(target).equals(Buffer.from(content, "utf8")) ? "same" : "different";
+  } catch {
+    return "different";
   }
 }
 
@@ -108,9 +135,18 @@ function scaffoldMap(vars) {
 
 export async function init(flags = {}) {
   const cwd = process.cwd();
+
+  // Mutually exclusive escape hatches: refuse before platform resolution and
+  // before any disk access, so nothing can be written.
+  if (flags.force && flags["keep-existing"]) {
+    console.error("  error: --force and --keep-existing are mutually exclusive — no files written.");
+    process.exitCode = 1;
+    return;
+  }
+
   const python = resolvePythonCommand();
   const vars = { PYTHON_CMD: python };
-  const mode = flags.force ? "force" : "skip";
+  const mode = flags.force ? "force" : flags["keep-existing"] ? "keep-existing" : "default";
   let platforms;
   let selectionSource;
   try {
@@ -138,6 +174,35 @@ export async function init(flags = {}) {
   const exists = (rel) => fs.existsSync(path.join(cwd, ...rel.split("/")));
   const extraOwned = [".ateam/.developer", ".ateam/.version"];
 
+  // Preflight: compare every file this run would write or merge against disk.
+  // Byte-identical files are not conflicts; runtime data (PROTECTED) and
+  // .developer/.version are owned by other mechanisms and excluded.
+  const planned = new Map([...scaffoldWritable, ...scaffoldProtected, ...platformFiles]);
+  const conflicts = [];
+  for (const [rel, content] of planned) {
+    if (PROTECTED.has(rel)) continue;
+    if (compareTarget(path.join(cwd, ...rel.split("/")), content) === "different") {
+      conflicts.push(rel);
+    }
+  }
+
+  // Default mode: fail fast with a zero-write exit when anything conflicts.
+  if (mode === "default" && conflicts.length) {
+    console.error(
+      `ateam init stopped — ${conflicts.length} existing file(s) differ from the template:`,
+    );
+    for (const line of cappedPathLines(conflicts)) console.error(line);
+    console.error("");
+    console.error("No files were written.");
+    console.error(
+      "  --force           overwrite conflicting template files (host configs are still merge-only)",
+    );
+    console.error("  --keep-existing   keep conflicting files and install the rest");
+    console.error("  or move the conflicting files out of the way and re-run `ateam init`.");
+    process.exitCode = 1;
+    return;
+  }
+
   // --force: announce every existing file this run is about to overwrite,
   // before any write happens. Host hook configs are excluded: they are
   // merged below, never overwritten.
@@ -150,29 +215,34 @@ export async function init(flags = {}) {
     printPathList("overwriting (existing)", [...new Set(overwritten)]);
   }
 
-  // Existing host hook configs are always merged — in every mode — and then
-  // removed from the write map, including on merge failure, so a template
-  // write (even --force) can never clobber user hooks/permissions/env.
-  const merged = mergeExistingHookConfigs(cwd, platformFiles);
-  for (const warning of merged.warnings) {
-    console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
-  }
-
   let keptExisting = [];
   if (mode !== "force") {
-    keptExisting = [
-      ...new Set([
-        ...[...scaffoldWritable.keys(), ...scaffoldProtected.keys(), ...platformFiles.keys()].filter(
-          exists,
-        ),
-        ...extraOwned.filter(exists),
-        ...merged.preserved,
-      ]),
-    ];
+    // Everything already on disk stays untouched in these modes: identical
+    // template files are skipped, protected runtime data is never written,
+    // and conflicting files were either kept by --keep-existing or would
+    // have stopped the run above.
+    keptExisting = [...new Set([...planned.keys()].filter(exists).concat(extraOwned.filter(exists)))];
+
+    // Existing host hook configs are never merged (or rewritten) outside
+    // --force: default mode only gets here when they are byte-identical, and
+    // --keep-existing must leave them exactly as the user has them.
+    for (const rel of [...platformFiles.keys()]) {
+      if (HOOK_CONFIG_PATHS.has(rel) && exists(rel)) platformFiles.delete(rel);
+    }
+
     printPathList("kept (existing)", keptExisting);
+  } else {
+    // Existing host hook configs are merged and then removed from the write
+    // map, including on merge failure, so a template write (even --force)
+    // can never clobber user hooks/permissions/env.
+    const merged = mergeExistingHookConfigs(cwd, platformFiles);
+    for (const warning of merged.warnings) {
+      console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
+    }
   }
 
-  const scaffoldResult = writeTemplateMap(cwd, scaffoldWritable, mode);
+  const writeMode = mode === "force" ? "force" : "skip";
+  const scaffoldResult = writeTemplateMap(cwd, scaffoldWritable, writeMode);
   const protectedResult = writeTemplateMap(cwd, scaffoldProtected, "skip");
   scaffoldResult.written.push(...protectedResult.written);
   scaffoldResult.skipped.push(...protectedResult.skipped);
@@ -192,7 +262,7 @@ export async function init(flags = {}) {
     atomicWrite(versionFile, `${VERSION}\n`);
   }
 
-  const platformResult = writeTemplateMap(cwd, platformFiles, mode);
+  const platformResult = writeTemplateMap(cwd, platformFiles, writeMode);
 
   recordHashes(cwd, new Map([...scaffold, ...platformFiles]));
 

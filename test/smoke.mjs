@@ -56,11 +56,14 @@ function assertSamePlatforms(actual, expected, label) {
 }
 
 try {
-  // Pre-existing host config: init must merge our hooks, not clobber or skip.
+  // Pre-existing host config: a plain init must stop before writing anything,
+  // list the conflicts, and leave the host files byte-for-byte untouched.
   fs.mkdirSync(path.join(tmp, ".claude"), { recursive: true });
   fs.mkdirSync(path.join(tmp, ".codex"), { recursive: true });
+  const claudeSettingsPath = path.join(tmp, ".claude/settings.json");
+  const codexHooksPath = path.join(tmp, ".codex/hooks.json");
   fs.writeFileSync(
-    path.join(tmp, ".claude/settings.json"),
+    claudeSettingsPath,
     `${JSON.stringify({
       hooks: {
         SessionStart: [
@@ -70,19 +73,45 @@ try {
     }, null, 2)}\n`,
   );
   fs.writeFileSync(
-    path.join(tmp, ".codex/hooks.json"),
+    codexHooksPath,
     `${JSON.stringify({
       hooks: {
         UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo pre-existing-codex" }] }],
       },
     }, null, 2)}\n`,
   );
+  const claudeInitialBytes = fs.readFileSync(claudeSettingsPath);
+  const codexInitialBytes = fs.readFileSync(codexHooksPath);
 
-  const firstInitOut = runAteem(tmp, ["init", "--user", "smoketest", "--yes"]);
+  const stopResult = runAteemResult(tmp, ["init", "--user", "smoketest", "--yes"]);
+  assert(stopResult.status === 1, `conflicting init exited ${stopResult.status}, expected 1`);
+  const stopStderr = String(stopResult.stderr || "");
   assert(
-    firstInitOut.includes("kept (existing)"),
-    "init did not report the kept (existing) list for pre-existing files",
+    stopStderr.includes("ateam init stopped — 2 existing file(s) differ from the template:"),
+    `init stop message missing or misspelled:\n${stopStderr}`,
   );
+  assert(stopStderr.includes(".claude/settings.json"), "init stop list missing .claude/settings.json");
+  assert(stopStderr.includes(".codex/hooks.json"), "init stop list missing .codex/hooks.json");
+  assert(stopStderr.includes("No files were written."), "init stop message missing the zero-write line");
+  assert(
+    stopStderr.includes("--force") && stopStderr.includes("--keep-existing"),
+    "init stop message does not offer --force / --keep-existing",
+  );
+  assert(!fs.existsSync(path.join(tmp, ".ateam")), "conflicting init wrote .ateam");
+  assert(!fs.existsSync(path.join(tmp, ".qoder")), "conflicting init wrote .qoder");
+  assert(!fs.existsSync(path.join(tmp, ".agents")), "conflicting init wrote .agents");
+  assert(
+    fs.readFileSync(claudeSettingsPath).equals(claudeInitialBytes),
+    "conflicting init modified .claude/settings.json",
+  );
+  assert(
+    fs.readFileSync(codexHooksPath).equals(codexInitialBytes),
+    "conflicting init modified .codex/hooks.json",
+  );
+
+  // --force is the explicit escape hatch: install templates, merge host
+  // configs (never replace them).
+  runAteem(tmp, ["init", "--user", "smoketest", "--yes", "--force"]);
 
   const claudeSettings = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
   assert(claudeSettings.includes("echo pre-existing-claude"), "merge dropped existing claude hook");
@@ -168,16 +197,34 @@ try {
   const codexAfterForce = fs.readFileSync(path.join(tmp, ".codex/hooks.json"), "utf8");
   assert(codexAfterForce.includes("echo pre-existing-codex"), "init --force clobbered existing codex hook");
 
-  const claudeBeforeReinit = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
-  const reinitOut = runAteem(tmp, ["init", "--user", "smoketest", "--yes"]);
+  // A plain re-init now stops: the merged host configs carry user hooks the
+  // template does not have. --keep-existing keeps them exactly as-is.
+  const claudeBeforeReinit = fs.readFileSync(path.join(tmp, ".claude/settings.json"));
+  const codexBeforeReinit = fs.readFileSync(path.join(tmp, ".codex/hooks.json"));
+  const reinitStop = runAteemResult(tmp, ["init", "--user", "smoketest", "--yes"]);
+  assert(
+    reinitStop.status === 1,
+    `plain re-init with differing host configs exited ${reinitStop.status}, expected 1`,
+  );
+  const reinitStopStderr = String(reinitStop.stderr || "");
+  assert(reinitStopStderr.includes("ateam init stopped"), "plain re-init did not report the conflict stop");
+  assert(
+    reinitStopStderr.includes(".claude/settings.json"),
+    "plain re-init stop list missing .claude/settings.json",
+  );
+
+  const reinitOut = runAteem(tmp, ["init", "--user", "smoketest", "--yes", "--keep-existing"]);
   assert(
     reinitOut.includes("kept (existing)"),
     "repeated init did not report the kept (existing) list",
   );
-  const claudeAfterReinit = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
   assert(
-    JSON.stringify(JSON.parse(claudeBeforeReinit)) === JSON.stringify(JSON.parse(claudeAfterReinit)),
-    "re-init duplicated merged hooks",
+    fs.readFileSync(path.join(tmp, ".claude/settings.json")).equals(claudeBeforeReinit),
+    "--keep-existing merged or rewrote .claude/settings.json",
+  );
+  assert(
+    fs.readFileSync(path.join(tmp, ".codex/hooks.json")).equals(codexBeforeReinit),
+    "--keep-existing merged or rewrote .codex/hooks.json",
   );
 
   // 1. Non-TTY with neither --platform nor --yes: fail fast, write nothing.
@@ -226,7 +273,119 @@ try {
   }
   assertSamePlatforms(readPlatforms(qoderOnlyDir), ["qoder"], "update after --platform qoder");
 
-  // 6. Invalid host JSON is warned about and left byte-for-byte untouched.
+  // 4. Byte-identical existing files are not conflicts: re-running init on an
+  // untouched install succeeds, reports kept (existing), and does not
+  // rewrite/reformat the host config.
+  const sameDir = mkTemp();
+  runAteem(sameDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  const sameClaudePath = path.join(sameDir, ".claude/settings.json");
+  const sameClaudeBytes = fs.readFileSync(sameClaudePath);
+  const sameWorkflowPath = path.join(sameDir, ".ateam/workflow.md");
+  const sameWorkflowBytes = fs.readFileSync(sameWorkflowPath);
+  const sameReinit = runAteemResult(sameDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  assert(sameReinit.status === 0, `identical re-init exited ${sameReinit.status}, expected 0`);
+  assert(
+    String(sameReinit.stdout).includes("kept (existing)"),
+    "identical re-init did not report the kept (existing) list",
+  );
+  assert(
+    fs.readFileSync(sameClaudePath).equals(sameClaudeBytes),
+    "identical host config was rewritten/reformatted",
+  );
+  assert(
+    fs.readFileSync(sameWorkflowPath).equals(sameWorkflowBytes),
+    "identical template file was rewritten",
+  );
+
+  // 5. --keep-existing keeps conflicting files (host configs included, without
+  // merging) and installs only the missing ones.
+  const keepDir = mkTemp();
+  runAteem(keepDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  const keepWorkflow = path.join(keepDir, ".ateam/workflow.md");
+  const keepClaudePath = path.join(keepDir, ".claude/settings.json");
+  const missingCommand = path.join(keepDir, ".claude/commands/ateam/start.md");
+  fs.appendFileSync(keepWorkflow, "\n<!-- user edit -->\n");
+  // 4-space JSON: a merge (or any rewrite) would reformat it to 2 spaces.
+  fs.writeFileSync(keepClaudePath, `${JSON.stringify({ userMarker: true }, null, 4)}\n`);
+  const keepWorkflowBytes = fs.readFileSync(keepWorkflow);
+  const keepClaudeBytes = fs.readFileSync(keepClaudePath);
+  fs.rmSync(missingCommand);
+
+  const keepStop = runAteemResult(keepDir, ["init", "--platform", "claude", "--user", "smoketest"]);
+  assert(keepStop.status === 1, `default init with user edits exited ${keepStop.status}, expected 1`);
+  const keepStopStderr = String(keepStop.stderr || "");
+  assert(keepStopStderr.includes(".ateam/workflow.md"), "stop list missing edited workflow.md");
+  assert(keepStopStderr.includes(".claude/settings.json"), "stop list missing edited host config");
+  assert(!fs.existsSync(missingCommand), "stopped init installed a missing file");
+  assert(
+    fs.readFileSync(keepWorkflow).equals(keepWorkflowBytes),
+    "stopped init modified edited workflow.md",
+  );
+  assert(
+    fs.readFileSync(keepClaudePath).equals(keepClaudeBytes),
+    "stopped init modified edited host settings.json",
+  );
+
+  const keepOut = runAteem(keepDir, ["init", "--platform", "claude", "--user", "smoketest", "--keep-existing"]);
+  assert(keepOut.includes("kept (existing)"), "--keep-existing did not report the kept (existing) list");
+  assert(keepOut.includes(".ateam/workflow.md"), "--keep-existing kept list missing edited workflow.md");
+  assert(
+    fs.readFileSync(keepWorkflow).equals(keepWorkflowBytes),
+    "--keep-existing overwrote workflow.md",
+  );
+  assert(
+    fs.readFileSync(keepClaudePath).equals(keepClaudeBytes),
+    "--keep-existing merged or rewrote host settings.json",
+  );
+  assert(fs.existsSync(missingCommand), "--keep-existing did not install the missing template file");
+
+  // --force overwrites template conflicts, merges (never replaces) host
+  // configs, and never touches runtime data.
+  const keepState = path.join(keepDir, ".ateam/workspace/leader-state.json");
+  fs.writeFileSync(keepState, "runtime-state\n");
+  const claudeBeforeForce = fs.readFileSync(keepClaudePath);
+  const forceKeep = runAteemResult(keepDir, ["init", "--platform", "claude", "--user", "smoketest", "--force"]);
+  assert(forceKeep.status === 0, `init --force exited ${forceKeep.status}`);
+  const forceKeepStdout = String(forceKeep.stdout);
+  assert(forceKeepStdout.includes("overwriting (existing)"), "init --force did not announce overwrites");
+  assert(forceKeepStdout.includes(".ateam/workflow.md"), "init --force overwrite list missing workflow.md");
+  assert(
+    fs.readFileSync(keepWorkflow).equals(fs.readFileSync(sameWorkflowPath)),
+    "init --force did not restore workflow.md to the template",
+  );
+  assert(
+    !fs.readFileSync(keepClaudePath).equals(claudeBeforeForce),
+    "init --force did not merge the conflicting host config",
+  );
+  const mergedClaude = JSON.parse(fs.readFileSync(keepClaudePath, "utf8"));
+  assert(mergedClaude.userMarker === true, "init --force clobbered user host settings");
+  assert(
+    fs.readFileSync(keepClaudePath, "utf8").includes("hook_session_start.py"),
+    "init --force merge missing the ateam claude hook",
+  );
+  assert(fs.readFileSync(keepState, "utf8") === "runtime-state\n", "init --force overwrote runtime leader-state");
+
+  // 6. --force and --keep-existing are mutually exclusive: error, exit 1, no writes.
+  const mutexDir = mkTemp();
+  const mutex = runAteemResult(mutexDir, ["init", "--platform", "agents", "--force", "--keep-existing"]);
+  assert(mutex.status === 1, `mutually exclusive flags exited ${mutex.status}, expected 1`);
+  const mutexStderr = String(mutex.stderr || "");
+  assert(
+    mutexStderr.includes("--force") && mutexStderr.includes("--keep-existing"),
+    "mutex error does not name both flags",
+  );
+  assert(mutexStderr.includes("mutually exclusive"), "mutex error message missing");
+  assert(fs.readdirSync(mutexDir).length === 0, "mutually exclusive flags wrote files");
+
+  // The mutex check wins over platform resolution (no --platform/--yes here).
+  const mutexNoPlatform = runAteemResult(mutexDir, ["init", "--force", "--keep-existing"]);
+  assert(mutexNoPlatform.status === 1, `mutex without platform exited ${mutexNoPlatform.status}`);
+  assert(
+    String(mutexNoPlatform.stderr).includes("mutually exclusive"),
+    "mutex check did not run before platform resolution",
+  );
+
+  // 7. Invalid host JSON is warned about and left byte-for-byte untouched.
   const invalidJsonDir = mkTemp();
   const invalidJsonTarget = path.join(invalidJsonDir, ".claude/settings.json");
   fs.mkdirSync(path.dirname(invalidJsonTarget), { recursive: true });

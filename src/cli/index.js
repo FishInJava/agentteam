@@ -12,7 +12,7 @@ const pkg = JSON.parse(
 const HELP = `ateam ${pkg.version} — installable multi-agent development scaffold
 
 Usage:
-  ateam init [--platform <list>] [--user <name>] [--force] [--yes]
+  ateam init [--platform <list>] [--user <name>] [--force | --keep-existing] [--yes]
   ateam update [--force]
   ateam context [--json]
   ateam version
@@ -23,11 +23,20 @@ Init options:
                      Supported: qoder, claude, codex, agents
                      Default: qoder,claude,codex (agents core is always written)
   --user <name>      Developer identity (default: git config user.name)
-  --force            Overwrite existing template files (runtime board data is kept)
+  --force            Overwrite existing template files that differ from the template.
+                     Host hook configs are still merged, never replaced; runtime board
+                     data is kept.
+  --keep-existing    Keep existing files that differ from the template and install only
+                     the missing ones. Existing host configs are not merged.
   --yes, -y          Non-interactive: install the default platforms (qoder,claude,codex).
                      Without --platform or --yes, init prompts on an interactive terminal;
                      a non-interactive terminal fails with an actionable error and
                      writes no files.
+
+Safety:
+  By default, init stops before writing anything when an existing target file differs
+  from the template, lists the conflicts, and exits non-zero. --force and
+  --keep-existing are mutually exclusive.
 
 What it writes:
   .ateam/            board (fact-intent graph) + doctrine + Python state scripts

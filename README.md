@@ -65,7 +65,7 @@ ateam init --yes                     # CI / 脚本：不问，装默认 qoder + 
 | `bin/` | CLI 入口：`bin/ateam.js`，`package.json` 的 `bin` 指向它 |
 | `src/` | CLI 实现：`src/cli/index.js` 负责命令分发；`src/commands/` 为 `init` / `update` / `context` 三个命令；`src/lib/` 为 scaffold、文件与哈希、hooks 合并、平台与 Python 探测等工具 |
 | `templates/` | 脚手架模板（事实源）：`templates/scaffold/` 是 `init` 铺到目标项目的文件（workflow.md、config.json、memory/、roles/、scripts/、board/、workspace/、missions/、gitignore.txt）；`templates/common/` 是跨平台命令（start / continue / finish / test-handover）与技能（start / continue / finish）；`templates/qoder/`、`templates/claude/`、`templates/codex/` 是各平台 settings / hooks 集成文件 |
-| `test/` | 端到端 smoke 测试：`test/smoke.mjs` 在临时项目里跑 init（平台选择、同名安全）→ board → update → force 保护 → 长期记忆 |
+| `test/` | 端到端 smoke 测试：`test/smoke.mjs` 在临时项目里跑 init（平台选择、冲突预检、`--force` / `--keep-existing`）→ board → update → force 保护 → 长期记忆 |
 | `docs/` | 设计文档与产品级教训 `lessons.md`（仅本仓库维护，不随 init 铺出），见下方「设计文档」表 |
 
 其中 `bin/`、`src/`、`templates/`、`README.md` 会随 npm 包发布（`package.json` 的 `files`）；`test/`、`docs/` 仅在仓库内使用。
@@ -123,7 +123,8 @@ ateam update
 ```
 
 `update` 尊重 `ateam init` 时记下的平台选择：当初只选了 qoder，就不会凭空冒出 `.claude/` 或
-`.codex/`；想改选择，重跑一次 `ateam init` 即可。普通 `update` 只刷新没被你改过的模板文件，
+`.codex/`；想改选择，重跑一次 `ateam init` 即可（已有文件冲突时按下文「同名文件与已有项目」处理）。
+普通 `update` 只刷新没被你改过的模板文件，
 本地改过的会保留并列出冲突，`update --force` 才会覆盖它们（宿主配置与运行数据仍不在此列）。
 
 完整板子命令（fact / intent / acceptance / hint / handover / consumption）见
@@ -131,17 +132,27 @@ ateam update
 
 ## 同名文件与已有项目
 
-在已有项目里跑 `ateam init` 是常态，不需要先清空目录。规则很简单：
+在已有项目里跑 `ateam init` 是常态，不需要先清空目录。默认策略是 **先预检、冲突即停**：
+写盘前逐个比对本次会写或合并的目标文件，已有文件内容与模板不同就算冲突；只要有一条冲突，
+**一个文件都不写**，stderr 打印 `ateam init stopped — N existing file(s) differ from the template:`
+和路径清单，退出码 1，并提示出路。逐字节相同（byte-equal）的文件不算冲突。
 
-| 目标文件 | `init`（默认） | `init --force` |
-|---|---|---|
-| 与模板同名的普通文件（已存在） | 保留，打印 `kept (existing): N` 和路径清单 | 覆盖，但写盘前先打印 `overwriting (existing): N` 和路径清单 |
-| 宿主配置：`.claude/settings.json`、`.qoder/settings.json`、`.codex/hooks.json` | 只把 ateam 的 hooks 合并进去，你原有的配置和权限保留 | 仍然只合并，永远不会整体覆盖 |
-| 运行数据：`.ateam/board/counters.json`、`.ateam/workspace/leader-state.json`、`.ateam/workspace/handover.md` | 永不覆盖 | 永不覆盖 |
-| 宿主配置不是合法 JSON | 警告并原样跳过，文件一个字节都不动 | 同样警告并原样跳过 |
+| 目标文件 | `init`（默认） | `init --force` | `init --keep-existing` |
+|---|---|---|---|
+| 与模板同名的普通文件（已存在、内容不同） | **停止**，列冲突清单并给出路，零写入 | 覆盖，写盘前先打印 `overwriting (existing): N` 和路径清单 | 保留，打印 `kept (existing): N` 和路径清单，其余文件照常安装 |
+| 已存在且与模板逐字节相同 | 不算冲突，原样保留 | 照常覆盖（内容不变） | 原样保留 |
+| 宿主配置：`.claude/settings.json`、`.qoder/settings.json`、`.codex/hooks.json` | 内容不同即冲突（默认停止）；相同则原样保留、不重写 | 只把 ateam 的 hooks 合并进去，你原有的配置和权限保留，永不整体覆盖 | 保留，不 merge |
+| 运行数据：`.ateam/board/counters.json`、`.ateam/workspace/leader-state.json`、`.ateam/workspace/handover.md` | 永不覆盖 | 永不覆盖 | 永不覆盖 |
+| 宿主配置不是合法 JSON | 内容不同即冲突（默认停止） | 警告并原样跳过，文件一个字节都不动 | 原样保留 |
 
-清单最多列 20 条，超出部分显示 `... and N more`。`update` 也遵循同样的宿主配置与运行数据规则；
+清单最多列 20 条，超出部分显示 `... and N more`。`--force` 与 `--keep-existing` 互斥，
+同时给出会直接报错退出、不写盘。`update` 的规则不变：宿主配置与运行数据仍永不覆盖，
 合并失败只会产生警告，不会把文件冲掉，修好 JSON 后重跑即可。
+
+**重跑 init 改平台**：`.ateam/.platforms.json` 会按新的 `--platform` 选择重写，之后的 `update`
+也只刷新新选择。若之前装过、且宿主配置里已有你自己的 hooks/权限，重跑默认会因宿主配置与模板
+不同而停止；这时用 `--force`（覆盖模板文件，宿主配置仍只合并）或 `--keep-existing`
+（保留所有已有文件，只补缺失的）即可。
 
 ## 设计文档
 
@@ -164,7 +175,7 @@ ateam update
 ## 验证
 
 ```bash
-npm run smoke     # 临时项目跑 init（平台选择 / 同名安全）-> board -> update -> force 保护 -> 长期记忆
+npm run smoke     # 临时项目跑 init（平台选择 / 冲突预检 / keep-existing）-> board -> update -> force 保护 -> 长期记忆
 ```
 
 > 使用场景是**代码开发与维护**。
