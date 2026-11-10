@@ -38,6 +38,51 @@ ateam init --platform qoder,agents   # 只装部分平台
 .codex/                # hooks.json
 ```
 
+## 仓库目录结构
+
+本仓库的目录分三类，注意区分：**跟踪的源码/资产**、**`ateam init` 在目标项目生成的目录**、**本地参考资料**。不要把它们与上方「`ateam init` 会铺出」的树混淆。
+
+### 一、随仓库跟踪的源码与资产
+
+| 路径 | 作用 |
+|---|---|
+| `bin/` | CLI 入口：`bin/ateam.js`，`package.json` 的 `bin` 指向它 |
+| `src/` | CLI 实现：`src/cli/index.js` 负责命令分发；`src/commands/` 为 `init` / `update` / `context` 三个命令；`src/lib/` 为 scaffold、文件与哈希、hooks 合并、平台与 Python 探测等工具 |
+| `templates/` | 脚手架模板（事实源）：`templates/scaffold/` 是 `init` 铺到目标项目的文件（workflow.md、config.json、roles/、scripts/、board/、workspace/、missions/、gitignore.txt）；`templates/common/` 是跨平台命令（start / continue / finish / test-handover）与技能（start / continue / finish）；`templates/qoder/`、`templates/claude/`、`templates/codex/` 是各平台 settings / hooks 集成文件 |
+| `test/` | 端到端 smoke 测试：`test/smoke.mjs` 在临时项目里跑 init → board → update → force 保护 |
+| `docs/` | 设计文档，见下方「设计文档」表 |
+
+其中 `bin/`、`src/`、`templates/`、`README.md` 会随 npm 包发布（`package.json` 的 `files`）；`test/`、`docs/` 仅在仓库内使用。
+
+### 二、`ateam init` 在目标项目生成的目录（不跟踪、不随包分发）
+
+| 路径 | 作用 |
+|---|---|
+| `.ateam/` | 板子 + 军规 + Python 状态脚本：`board/`、`roles/`、`scripts/`、`workspace/`、`missions/`、`workflow.md`、`config.json`（细节见上方生成树） |
+| `.agents/skills/` | 通用技能（ateam-start / continue / finish），始终铺，Codex 等直接消费 |
+| `.qoder/` | Qoder 命令、技能与 `settings.json`（hooks） |
+| `.claude/` | Claude Code 命令、技能与 `settings.json`（hooks） |
+| `.codex/` | Codex 的 `hooks.json` |
+
+这些目录由 `.gitignore` 忽略。本仓库根目录当前就有一份本地生成物；clone 后执行 `npm link && ateam init` 即可重建。
+
+### 三、本地参考资料（不进入仓库）
+
+| 路径 | 作用 |
+|---|---|
+| `Cairn-main/` | 本地 clone 的参考实现，已被 `.gitignore` 忽略，不在仓库与 npm 包中 |
+| `sapper-v2-master/` | 本地 clone 的参考实现，已被 `.gitignore` 忽略，不在仓库与 npm 包中 |
+
+### 根文件
+
+| 文件 | 作用 |
+|---|---|
+| `README.md` | 本文件：项目介绍、快速开始、目录结构、日常使用 |
+| `package.json` | npm 包元数据：`bin` 命令、`files` 发布清单、`npm run smoke`、Node 版本要求 |
+| `.gitignore` | 忽略 `node_modules/`、Python 缓存、`ateam init` 生成物与本地参考实现 |
+
+（`.git/` 仅为 Git 元数据目录，不参与上述分类。）
+
 ## 日常使用
 
 ```bash
