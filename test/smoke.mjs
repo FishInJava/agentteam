@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolvePythonCommand } from "../src/lib/python.js";
+import { readTemplateDir, walkFiles } from "../src/lib/fsutil.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const BIN = path.join(PACKAGE_ROOT, "bin", "ateam.js");
@@ -58,6 +59,14 @@ function pyResult(args) {
     encoding: "utf8",
     stdio: "pipe",
   });
+}
+/** Run board.py in a specific directory; returns stdout (throws on failure). */
+function pyIn(cwd, args) {
+  return execFileSync(PY[0], [...PY.slice(1), ...args], { cwd, encoding: "utf8", stdio: "pipe" });
+}
+/** Run board.py in a specific directory; returns spawnSync result. */
+function pyInResult(cwd, args) {
+  return spawnSync(PY[0], [...PY.slice(1), ...args], { cwd, encoding: "utf8", stdio: "pipe" });
 }
 function normalizeSlashes(value) {
   return String(value).replace(/\\/g, "/");
@@ -164,6 +173,62 @@ try {
   for (const dir of [".qoder", ".claude", ".codex"]) {
     assert(fs.existsSync(path.join(tmp, dir)), `init --yes missing ${dir}`);
   }
+
+  // A1: Python bytecode never reaches templates, the installed scaffold, or
+  // the npm package.
+  assert(
+    !fs.existsSync(path.join(tmp, ".ateam/scripts/__pycache__")),
+    "init installed .ateam/scripts/__pycache__",
+  );
+  assert(
+    !listFiles(path.join(tmp, ".ateam")).some((rel) => /\.(pyc|pyo)$/.test(rel)),
+    "init installed Python bytecode into .ateam",
+  );
+
+  const bytecodeDir = mkTemp();
+  fs.mkdirSync(path.join(bytecodeDir, "__pycache__"), { recursive: true });
+  fs.writeFileSync(path.join(bytecodeDir, "__pycache__/x.pyc"), "bytecode");
+  fs.writeFileSync(path.join(bytecodeDir, "stray.pyo"), "bytecode");
+  fs.writeFileSync(path.join(bytecodeDir, "normal.txt"), "ok");
+  const walkedRel = walkFiles(bytecodeDir)
+    .map((full) => path.relative(bytecodeDir, full).split(path.sep).join("/"))
+    .sort();
+  assert(
+    JSON.stringify(walkedRel) === JSON.stringify(["normal.txt"]),
+    `walkFiles leaked Python bytecode: ${walkedRel.join(", ")}`,
+  );
+  const bytecodeTemplateMap = readTemplateDir(bytecodeDir);
+  assert(
+    JSON.stringify([...bytecodeTemplateMap.keys()]) === JSON.stringify(["normal.txt"]),
+    `readTemplateDir leaked Python bytecode: ${[...bytecodeTemplateMap.keys()].join(", ")}`,
+  );
+
+  let packNote = null;
+  try {
+    const pack = spawnSync("npm pack --dry-run --json --ignore-scripts", {
+      cwd: PACKAGE_ROOT,
+      encoding: "utf8",
+      stdio: "pipe",
+      shell: true,
+    });
+    const parsed = pack.status === 0 && pack.stdout ? JSON.parse(pack.stdout) : null;
+    const packFiles =
+      Array.isArray(parsed) && parsed[0] && Array.isArray(parsed[0].files) ? parsed[0].files : null;
+    if (!packFiles) {
+      packNote = String(pack.stderr || "").trim() || `unexpected npm pack output (exit ${pack.status})`;
+    } else {
+      const bytecode = packFiles
+        .map((file) => file.path)
+        .filter((rel) => /(^|\/)__pycache__(\/|$)/.test(rel) || /\.(pyc|pyo)$/.test(rel));
+      assert(
+        bytecode.length === 0,
+        `npm pack would ship Python bytecode: ${bytecode.join(", ")}`,
+      );
+    }
+  } catch (error) {
+    packNote = error.message;
+  }
+  if (packNote) console.log(`smoke: note: npm pack bytecode check skipped (${packNote})`);
 
   // Durable Leader memory ships with the scaffold and is required by workflow.md.
   assert(
@@ -541,6 +606,127 @@ try {
   assert(
     fs.readFileSync(invalidJsonTarget).equals(invalidBytes),
     "update --force modified an invalid host settings.json",
+  );
+
+  // A2: update fails closed when the hash ledger is missing (fresh clone /
+  // another machine). An edit must survive a plain update and be listed as a
+  // conflict; --force is the explicit way to restore the template.
+  const hashlessDir = mkTemp();
+  runAteem(hashlessDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  const hashlessWorkflowPath = path.join(hashlessDir, ".ateam/workflow.md");
+  const templateWorkflowBytes = fs.readFileSync(hashlessWorkflowPath);
+  fs.appendFileSync(hashlessWorkflowPath, "\n<!-- user edit -->\n");
+  const editedWorkflowBytes = fs.readFileSync(hashlessWorkflowPath);
+  const versionPath = path.join(hashlessDir, ".ateam/.version");
+  fs.writeFileSync(versionPath, "0.0.0-stale\n");
+  fs.rmSync(path.join(hashlessDir, ".ateam/.template-hashes.json"));
+
+  const hashlessUpdate = runAteemResult(hashlessDir, ["update"]);
+  assert(hashlessUpdate.status === 0, `update without hashes exited ${hashlessUpdate.status}`);
+  const hashlessStdout = String(hashlessUpdate.stdout);
+  assert(
+    hashlessStdout.includes("conflicts (use --force to overwrite):"),
+    "update without hashes did not print the conflict header",
+  );
+  assert(
+    hashlessStdout.includes(".ateam/workflow.md"),
+    "update without hashes did not list the unknown-provenance conflict",
+  );
+  assert(
+    fs.readFileSync(hashlessWorkflowPath).equals(editedWorkflowBytes),
+    "update overwrote a user edit when the hash ledger was missing",
+  );
+  const packageVersion = JSON.parse(
+    fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"),
+  ).version;
+  assert(
+    fs.readFileSync(versionPath, "utf8").trim() === packageVersion,
+    `update did not refresh .ateam/.version (got ${fs.readFileSync(versionPath, "utf8").trim()})`,
+  );
+
+  const forcedUpdate = runAteem(hashlessDir, ["update", "--force"]);
+  assert(forcedUpdate.includes("updated"), "update --force did not report updates");
+  assert(
+    fs.readFileSync(hashlessWorkflowPath).equals(templateWorkflowBytes),
+    "update --force did not restore the template",
+  );
+  assert(
+    fs.existsSync(path.join(hashlessDir, ".ateam/.template-hashes.json")),
+    "update did not rewrite .template-hashes.json",
+  );
+
+  // A5: project init --force archives the previous board graph and resets
+  // counters so a new requirement starts at f001/i001/a001.
+  const archiveDir = mkTemp();
+  runAteem(archiveDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  const boardPy = ".ateam/scripts/board.py";
+  pyIn(archiveDir, [boardPy, "project", "init", "--title", "Old requirement", "--origin", "old", "--goal", "old"]);
+  const oldFact = pyIn(archiveDir, [
+    boardPy, "fact", "add", "--title", "old fact", "--description", "d", "--kind", "note",
+  ]).trim();
+  const oldIntent = pyIn(archiveDir, [
+    boardPy, "intent", "add", "--from", oldFact, "--task-type", "chore", "--description", "old intent",
+  ]).trim();
+  const oldAcceptance = pyIn(archiveDir, [
+    boardPy, "acceptance", "add", "--criterion", "old criterion",
+  ]).trim();
+  pyIn(archiveDir, [
+    boardPy, "consumption", "add", "--intent", oldIntent, "--worker", "w0", "--tokens-in", "10",
+  ]);
+
+  const noForceReinit = pyInResult(archiveDir, [boardPy, "project", "init", "--title", "Nope"]);
+  assert(
+    noForceReinit.status === 1 && String(noForceReinit.stderr).includes("use --force"),
+    "project init without --force did not keep the existing-project error",
+  );
+
+  const archiveInitOut = pyIn(archiveDir, [
+    boardPy, "project", "init", "--title", "New requirement",
+    "--origin", "new", "--goal", "new", "--force",
+  ]);
+  assert(
+    archiveInitOut.includes("archived previous board ->"),
+    "project init --force did not report the archive",
+  );
+
+  const archiveRoot = path.join(archiveDir, ".ateam/workspace/archive");
+  const archiveStamps = fs.readdirSync(archiveRoot);
+  assert(archiveStamps.length === 1, `expected one archive dir, got ${archiveStamps.join(", ")}`);
+  const archiveRun = path.join(archiveRoot, archiveStamps[0]);
+  for (const [kind, id] of [
+    ["facts", oldFact],
+    ["intents", oldIntent],
+    ["acceptance", oldAcceptance],
+  ]) {
+    assert(
+      fs.existsSync(path.join(archiveRun, kind, `${id}.json`)),
+      `archive missing ${kind}/${id}.json`,
+    );
+  }
+  assert(fs.existsSync(path.join(archiveRun, "consumption.json")), "archive missing consumption.json");
+
+  const countersAfter = JSON.parse(
+    fs.readFileSync(path.join(archiveDir, ".ateam/board/counters.json"), "utf8"),
+  );
+  assert(
+    JSON.stringify(countersAfter) === JSON.stringify({ fact: 0, intent: 0, acceptance: 0, hint: 0 }),
+    `counters not reset after project init --force: ${JSON.stringify(countersAfter)}`,
+  );
+  assert(
+    fs.readdirSync(path.join(archiveDir, ".ateam/board/facts")).length === 0,
+    "facts dir was not recreated empty",
+  );
+  const archiveSummary = pyIn(archiveDir, [boardPy, "summary"]);
+  assert(
+    archiveSummary.includes("Board: facts 0 | intents 0"),
+    `summary not reset after project init --force:\n${archiveSummary}`,
+  );
+  const nextFactAfterArchive = pyIn(archiveDir, [
+    boardPy, "fact", "add", "--title", "new fact", "--description", "d", "--kind", "note",
+  ]).trim();
+  assert(
+    nextFactAfterArchive === "f001",
+    `next fact id after archive was ${nextFactAfterArchive}, expected f001`,
   );
 
   console.log("smoke: PASS");

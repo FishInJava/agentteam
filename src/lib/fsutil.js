@@ -16,10 +16,17 @@ export function toPosix(p) {
   return p.split(path.sep).join("/");
 }
 
+/** Python bytecode must never enter templates or be installed by init/update. */
+function isPythonBytecode(entry) {
+  if (entry.isDirectory()) return entry.name === "__pycache__";
+  return entry.name.endsWith(".pyc") || entry.name.endsWith(".pyo");
+}
+
 export function walkFiles(rootDir) {
   const out = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (isPythonBytecode(entry)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else out.push(full);

@@ -15,6 +15,8 @@ import {
 } from "../lib/platforms.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const VERSION = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8")).version;
+const PATH_LIST_LIMIT = 20;
 
 /**
  * Platforms `update` should refresh.
@@ -96,8 +98,12 @@ export async function update(flags = {}) {
       continue;
     }
 
-    const userModified = knownHash !== undefined && currentHash !== knownHash;
-    if (userModified && !flags.force) {
+    // Fail closed: only overwrite a differing file when we can prove it is
+    // untouched since install (a recorded hash exists and still matches).
+    // Missing provenance (`.template-hashes.json` is gitignored, so a fresh
+    // clone has none) is a conflict, not a silent overwrite.
+    const untouchedSinceInstall = knownHash !== undefined && currentHash === knownHash;
+    if (!untouchedSinceInstall && !flags.force) {
       conflicts.push(rel);
       skipped += 1;
       continue;
@@ -109,14 +115,18 @@ export async function update(flags = {}) {
   }
 
   saveHashes(cwd, hashes);
+  atomicWrite(path.join(cwd, ".ateam", ".version"), `${VERSION}\n`);
 
   const platformLabel = platforms.length ? platforms.join(", ") : "none (generic .agents/skills only)";
   console.log(`\nateam update — ${platformLabel}`);
   console.log(`  updated : ${updated}`);
-  console.log(`  kept    : ${skipped} (locally modified)`);
+  console.log(`  kept    : ${skipped} (modified or unknown provenance)`);
   console.log(`  runtime : ${runtimeKept} (board/leader state, never overwritten)`);
   if (conflicts.length) {
     console.log("  conflicts (use --force to overwrite):");
-    for (const file of conflicts) console.log(`    - ${file}`);
+    for (const file of conflicts.slice(0, PATH_LIST_LIMIT)) console.log(`    - ${file}`);
+    if (conflicts.length > PATH_LIST_LIMIT) {
+      console.log(`    ... and ${conflicts.length - PATH_LIST_LIMIT} more`);
+    }
   }
 }

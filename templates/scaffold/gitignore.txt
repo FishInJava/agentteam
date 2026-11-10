@@ -2,3 +2,6 @@
 .developer
 # 模板版本簿记
 .template-hashes.json
+# Python 字节码缓存
+__pycache__/
+*.pyc

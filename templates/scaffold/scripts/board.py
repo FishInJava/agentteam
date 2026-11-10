@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -57,11 +59,41 @@ def _split_pipe(value: str | None) -> list:
 
 # -- project -----------------------------------------------------------------
 
+BOARD_ENTITY_DIRS = ("facts", "intents", "acceptance", "hints")
+ZERO_COUNTERS = {"fact": 0, "intent": 0, "acceptance": 0, "hint": 0}
+
+
+def _archive_previous_board(ateam: Path) -> Path:
+    """Move the previous requirement's graph aside before --force reinstalls."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    archive = common.workspace_dir(ateam) / "archive" / stamp
+    archive.mkdir(parents=True, exist_ok=True)
+
+    board = common.board_dir(ateam)
+    for name in BOARD_ENTITY_DIRS:
+        source = board / name
+        if source.is_dir():
+            shutil.move(str(source), str(archive / name))
+    consumption = common.consumption_path(ateam)
+    if consumption.exists():
+        shutil.move(str(consumption), str(archive / "consumption.json"))
+
+    for name in BOARD_ENTITY_DIRS:
+        (board / name).mkdir(parents=True, exist_ok=True)
+    common.write_json(common.counters_path(ateam), dict(ZERO_COUNTERS))
+
+    print(f"archived previous board -> {archive}")
+    return archive
+
+
 def cmd_project_init(args, ateam: Path) -> int:
     existing = common.load_project(ateam)
     if existing is not None and not args.force:
         print("project already exists; use --force to replace", file=sys.stderr)
         return 1
+
+    if existing is not None:
+        _archive_previous_board(ateam)
 
     project = {
         "id": "p1",
