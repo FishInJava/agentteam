@@ -109,6 +109,8 @@ recon ──► implement ──► verify ──► endgame ──► done
 
 - 改哪里（module / change_points）？已有什么测试 / 怎么跑（test）？构建 / lint（codebase）？
 - 能否拆成几个独立实现切片？有没有兄弟实现可参照（同族迁移）？
+- **技能盘点**：扫 `.claude/skills/`、`.agents/skills/`、`.qoder/skills/` 以及 `CLAUDE.md` / `AGENTS.md`
+  约定，列出本地 skill / 知识入口；每条报「路径 + 一句话用途 + 适用任务类型」，你把它写成 fact。
 
 recon 只读、限时、回摘要。你读 report 写 `codebase/module/test` fact，**然后**才派 implement。
 不侦察就派实现 = 盲写。
@@ -119,6 +121,9 @@ recon 只读、限时、回摘要。你读 report 写 `codebase/module/test` fac
 
 - **有界**：一个 mission 一个切片 + 明确验收 + 明确预算。
 - **带情报进场**：相关 fact 渲染进 mission（Worker 不读板子，全部已知来自你）。
+- **技能路由**：每单只选 0–2 个与本切片直接相关的 skill，路径 / host 名经
+  `intent add --skills` 传入。ateam 自带的 `start` / `continue` / `finish` skill 不派给 Worker；
+  外部 skill 路由前先审内容。
 - **角度明确**：写清切入点，减少发散。
 - **渲染**：`board.py mission render <intent>` 生成任务书，去掉板子内部信息后下发给 Worker。
 

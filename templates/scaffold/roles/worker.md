@@ -9,9 +9,19 @@
 
 - `goal` / `angle`：这一单的目标与切入点
 - `relevant_facts`：Leader 替你筛好的已知（标题 + 描述 + doc 指针）
+- `skills`：Leader 选定的 0–2 个技能（按需加载）
 - `constraints`：仓库约定 + 范围限制
 - `acceptance`：这一单「做完」的判据
 - `budget`：model / time_seconds / tokens（硬上限）
+
+## Skill 加载
+
+mission 的 `## Skills (load before working)` 段若列出技能，开工前先加载：
+
+- 文件路径：先 Read 该文件；host skill 名：优先用宿主的 Skill 工具调用，没有该工具就自己定位并读技能文件。
+- `constraints` 永远压过 skill 文本；冲突时听 mission。
+- 只读与本切片相关的部分，并把阅读量算进 token 预算。
+- 不要自己去找 mission 没列出的 skill。
 
 ## 预算纪律（硬规则，不看就超时）
 

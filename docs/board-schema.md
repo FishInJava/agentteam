@@ -87,6 +87,7 @@ intent {
   description     : str           # 要做什么
   task_type       : enum          # recon | implement | fix | verify | chore | distill
   angle           : str           # 具体角度 / 切入点（同族迁移时带兄弟实现）
+  skills          : [str]         # 本单要 Worker 加载的技能（文件路径 / host skill 名），mission 渲染为 Skills 段
   creator         : leader
   worker          : str | null    # 指派的 worker；null = 未派
   mission_ref     : str           # 不透明关联令牌，Worker 原样回传以便 Leader 对账
