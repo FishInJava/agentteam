@@ -13,6 +13,18 @@ const BIN = path.join(PACKAGE_ROOT, "bin", "ateam.js");
 const PY_CMD = resolvePythonCommand();
 const PY = splitCommand(PY_CMD);
 
+// Host project-root hints would make the session-start hook resolve a foreign
+// project (an agent shell may export CLAUDE_PROJECT_DIR). The suite and every
+// child it spawns must start from a clean environment.
+const PROJECT_ENV_VARS = ["QODER_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR", "ATEAM_PROJECT_DIR"];
+for (const name of PROJECT_ENV_VARS) delete process.env[name];
+/** process.env with the project-root hints removed (for explicitly spawned hooks). */
+function cleanProjectEnv() {
+  const env = { ...process.env };
+  for (const name of PROJECT_ENV_VARS) delete env[name];
+  return env;
+}
+
 const tempDirs = [];
 function mkTemp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ateam-smoke-"));
@@ -845,12 +857,16 @@ try {
   // A8: handover placeholder detection ignores bare "TODO" in real handovers.
   const handoverDir = mkTemp();
   runAteem(handoverDir, ["init", "--platform", "agents", "--user", "smoketest"]);
-  const hookRun = (dir) =>
-    spawnSync(PY[0], [...PY.slice(1), ".ateam/scripts/hook_session_start.py"], {
+  // Strip the project-root hints even when a test re-poisons process.env, so
+  // the hook resolves the dir under test and not the host's project.
+  const hookRun = (dir, script = path.join(dir, ".ateam/scripts/hook_session_start.py")) =>
+    spawnSync(PY[0], [...PY.slice(1), script], {
       cwd: dir,
       input: "{}",
       encoding: "utf8",
       stdio: "pipe",
+      // Never let a hook run write .pyc files into the scaffold sources.
+      env: { ...cleanProjectEnv(), PYTHONDONTWRITEBYTECODE: "1" },
     });
   const placeholderHook = hookRun(handoverDir);
   assert(placeholderHook.status === 0, `session-start hook exited ${placeholderHook.status}`);
@@ -868,6 +884,40 @@ try {
   const realContext = JSON.parse(realHook.stdout).hookSpecificOutput.additionalContext;
   assert(realContext.includes("## Handover (previous Leader)"), "real handover was not injected");
   assert(realContext.includes("TODO: fix X"), "real handover containing TODO was dropped");
+
+  // A host-exported project-root var must not hijack the hook's resolved root.
+  for (const varName of PROJECT_ENV_VARS) {
+    const emptyDir = mkTemp();
+    process.env[varName] = emptyDir;
+    try {
+      const isolatedHook = hookRun(handoverDir);
+      assert(isolatedHook.status === 0, `session-start hook with ${varName} set exited ${isolatedHook.status}`);
+      const isolatedContext = JSON.parse(isolatedHook.stdout).hookSpecificOutput.additionalContext;
+      assert(
+        isolatedContext.includes("## Handover (previous Leader)"),
+        `${varName} hid the real handover (hook resolved the wrong project root)\n${isolatedHook.stderr}`,
+      );
+    } finally {
+      delete process.env[varName];
+    }
+  }
+
+  // No .ateam anywhere: exit 0 without stdout JSON, but say why on stderr.
+  const noAteemDir = mkTemp();
+  const noAteemHook = hookRun(
+    noAteemDir,
+    path.join(PACKAGE_ROOT, "templates/scaffold/scripts/hook_session_start.py"),
+  );
+  assert(noAteemHook.status === 0, `session-start hook without .ateam exited ${noAteemHook.status}`);
+  assert(noAteemHook.stdout === "", `session-start hook without .ateam wrote stdout: ${noAteemHook.stdout}`);
+  assert(
+    String(noAteemHook.stderr).includes("no .ateam directory"),
+    `missing .ateam directory diagnostic absent:\n${noAteemHook.stderr}`,
+  );
+  assert(
+    normalizePathCase(noAteemHook.stderr).includes(normalizePathCase(noAteemDir)),
+    `missing .ateam diagnostic omits the resolved path:\n${noAteemHook.stderr}`,
+  );
 
   // A9: unsupported array-shaped hooks are warned about and left untouched.
   const hooksArrayDir = mkTemp();

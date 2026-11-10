@@ -42,13 +42,14 @@ def _read_handover(ateam: Path) -> str:
     return content.rstrip()
 
 
-def _project_root(payload: dict) -> Path:
+def _project_root(payload: dict) -> tuple[Path, str]:
+    """Return (project root, source) where source is the env var name or "cwd"."""
     for var in PROJECT_ENV_VARS:
         value = os.environ.get(var)
         if value:
-            return Path(value).resolve()
+            return Path(value).resolve(), var
     cwd = payload.get("cwd") if isinstance(payload, dict) else None
-    return Path(cwd or ".").resolve()
+    return Path(cwd or ".").resolve(), "cwd"
 
 
 def main() -> int:
@@ -60,8 +61,14 @@ def main() -> int:
     except (json.JSONDecodeError, ValueError):
         payload = {}
 
-    ateam = _project_root(payload) / ".ateam"
+    root, source = _project_root(payload)
+    ateam = root / ".ateam"
     if not ateam.is_dir():
+        print(
+            f"ateam session-start hook: no .ateam directory at {ateam} "
+            f"(project root {root} from {source}); no session context injected",
+            file=sys.stderr,
+        )
         return 0
 
     summary = common.board_summary(ateam)
