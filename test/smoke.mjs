@@ -45,7 +45,7 @@ try {
     }, null, 2)}\n`,
   );
 
-  run(process.execPath, [BIN, "init", "--user", "smoketest"]);
+  run(process.execPath, [BIN, "init", "--user", "smoketest", "--yes"]);
 
   const claudeSettings = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
   assert(claudeSettings.includes("echo pre-existing-claude"), "merge dropped existing claude hook");
@@ -100,12 +100,12 @@ try {
   run(process.execPath, [BIN, "update"]);
 
   const before = fs.readFileSync(path.join(tmp, ".ateam/workspace/leader-state.json"), "utf8");
-  run(process.execPath, [BIN, "init", "--force"]);
+  run(process.execPath, [BIN, "init", "--force", "--yes"]);
   const after = fs.readFileSync(path.join(tmp, ".ateam/workspace/leader-state.json"), "utf8");
   assert(before === after, "init --force overwrote runtime leader-state");
 
   const claudeBeforeReinit = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
-  run(process.execPath, [BIN, "init", "--user", "smoketest"]);
+  run(process.execPath, [BIN, "init", "--user", "smoketest", "--yes"]);
   const claudeAfterReinit = fs.readFileSync(path.join(tmp, ".claude/settings.json"), "utf8");
   assert(
     JSON.stringify(JSON.parse(claudeBeforeReinit)) === JSON.stringify(JSON.parse(claudeAfterReinit)),

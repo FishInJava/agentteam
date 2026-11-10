@@ -8,13 +8,19 @@ import { buildScaffoldMap, PROTECTED_PATHS } from "../lib/scaffold.js";
 import { mergeExistingHookConfigs } from "../lib/hooks-merge.js";
 import { resolvePythonCommand } from "../lib/python.js";
 import { recordHashes } from "../lib/hashes.js";
-import { collectPlatformFiles, SUPPORTED_PLATFORMS } from "../lib/platforms.js";
+import {
+  collectPlatformFiles,
+  HOST_PLATFORMS,
+  suggestConfiguredPlatforms,
+  SUPPORTED_PLATFORMS,
+} from "../lib/platforms.js";
+import { selectPlatforms } from "../lib/platform-picker.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SCAFFOLD_DIR = path.join(PACKAGE_ROOT, "templates", "scaffold");
 const VERSION = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8")).version;
 
-const DEFAULT_PLATFORMS = ["qoder", "claude", "codex"];
+const DEFAULT_PLATFORMS = HOST_PLATFORMS.slice();
 const RUNTIME_DIRS = [
   "board/facts",
   "board/intents",
@@ -27,19 +33,50 @@ const RUNTIME_DIRS = [
 // Runtime-owned files: seeded on first init, never overwritten (even by --force).
 const PROTECTED = PROTECTED_PATHS;
 
-function resolvePlatforms(flags) {
-  if (!flags.platform) return DEFAULT_PLATFORMS.slice();
-  const list = String(flags.platform)
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  const invalid = list.filter((p) => !SUPPORTED_PLATFORMS.includes(p));
-  if (invalid.length) {
-    throw new Error(
-      `unsupported platform(s): ${invalid.join(", ")}. Supported: ${SUPPORTED_PLATFORMS.join(", ")}`,
-    );
+/** A terminal where the interactive picker can actually run. */
+function isInteractiveTTY() {
+  return Boolean(
+    process.stdin.isTTY &&
+      process.stdout.isTTY &&
+      typeof process.stdin.setRawMode === "function" &&
+      process.env.TERM !== "dumb",
+  );
+}
+
+/**
+ * Decide which platforms to install (priority: --platform, --yes, TTY picker,
+ * fail fast). Returns { platforms, source } and never writes files.
+ */
+async function resolvePlatforms(flags, cwd) {
+  if (flags.platform) {
+    const list = String(flags.platform)
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const invalid = list.filter((p) => !SUPPORTED_PLATFORMS.includes(p));
+    if (invalid.length) {
+      throw new Error(
+        `unsupported platform(s): ${invalid.join(", ")}. Supported: ${SUPPORTED_PLATFORMS.join(", ")}`,
+      );
+    }
+    return { platforms: list, source: "--platform" };
   }
-  return list;
+
+  if (flags.yes) {
+    return { platforms: DEFAULT_PLATFORMS.slice(), source: "--yes" };
+  }
+
+  if (isInteractiveTTY()) {
+    const selected = await selectPlatforms({
+      checked: suggestConfiguredPlatforms(cwd),
+    });
+    return { platforms: [...selected], source: "interactive" };
+  }
+
+  throw new Error(
+    "cannot choose platforms in a non-interactive terminal: pass --platform <list> " +
+      "(e.g. --platform qoder,claude,codex) or --yes",
+  );
 }
 
 function resolveDeveloper(cwd, flags) {
@@ -62,7 +99,18 @@ export async function init(flags = {}) {
   const python = resolvePythonCommand();
   const vars = { PYTHON_CMD: python };
   const mode = flags.force ? "force" : "skip";
-  const platforms = resolvePlatforms(flags);
+  let platforms;
+  let selectionSource;
+  try {
+    ({ platforms, source: selectionSource } = await resolvePlatforms(flags, cwd));
+  } catch (err) {
+    if (err && err.cancelled) {
+      console.error(`\n  ${err.message} — no files written.`);
+      process.exitCode = err.exitCode || 1;
+      return;
+    }
+    throw err;
+  }
   const isFirst = !fs.existsSync(path.join(cwd, ".ateam"));
 
   const scaffold = scaffoldMap(vars);
@@ -103,14 +151,28 @@ export async function init(flags = {}) {
 
   recordHashes(cwd, new Map([...scaffold, ...platformFiles]));
 
+  // Remember the deliberate selection (host platforms only; `agents` is the
+  // always-on generic core). An empty array means "no host platform on purpose".
+  const selectedHosts = platforms.filter((p) => HOST_PLATFORMS.includes(p));
+  atomicWrite(
+    path.join(cwd, ".ateam", ".platforms.json"),
+    `${JSON.stringify({ platforms: selectedHosts }, null, 2)}\n`,
+  );
+
   const written = scaffoldResult.written.length + platformResult.written.length;
   const skipped = scaffoldResult.skipped.length + platformResult.skipped.length;
+  const platformLabel = platforms.length ? platforms.join(", ") : "none";
 
   console.log(`\nateam ${isFirst ? "initialized" : "updated"} in ${cwd}`);
   console.log(`  python  : ${python}`);
-  console.log(`  platforms: ${platforms.join(", ")} (generic .agents/skills always)`);
+  console.log(`  selection: ${selectionSource}`);
+  console.log(`  platforms: ${platformLabel} (generic .agents/skills always)`);
   console.log(`  files   : ${written} written, ${skipped} kept (existing)`);
   console.log(`  developer: ${developer}`);
+
+  if (selectedHosts.length === 0) {
+    console.log("  note    : no host platform selected — only .agents/skills and .ateam are installed");
+  }
 
   if (platforms.includes("codex")) {
     console.log(

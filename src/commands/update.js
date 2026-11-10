@@ -7,30 +7,37 @@ import { buildScaffoldMap, PROTECTED_PATHS } from "../lib/scaffold.js";
 import { mergeExistingHookConfigs } from "../lib/hooks-merge.js";
 import { resolvePythonCommand } from "../lib/python.js";
 import { loadHashes, saveHashes, sha256 } from "../lib/hashes.js";
-import { collectPlatformFiles } from "../lib/platforms.js";
+import {
+  collectPlatformFiles,
+  detectConfiguredPlatforms,
+  HOST_PLATFORMS,
+  readPlatformSelection,
+} from "../lib/platforms.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
+/**
+ * Platforms `update` should refresh.
+ * - Persisted selection wins (an empty array is deliberate: generic core only).
+ * - Corrupt selection falls back to detection instead of failing the upgrade;
+ *   stderr says how to repair it.
+ * - Missing selection = pre-S1 install: same detection (and all-hosts fallback)
+ *   as older versions.
+ */
 function detectPlatforms(cwd) {
-  const hashes = loadHashes(cwd);
-  const keys = Object.keys(hashes);
-  const platforms = [];
+  const selection = readPlatformSelection(cwd);
+  if (selection.status === "ok") return selection.platforms;
 
-  const hasQoder =
-    keys.some((k) => k.startsWith(".qoder/")) ||
-    fs.existsSync(path.join(cwd, ".qoder/commands/ateam-start.md"));
-  const hasClaude =
-    keys.some((k) => k.startsWith(".claude/")) ||
-    fs.existsSync(path.join(cwd, ".claude/commands/ateam/start.md")) ||
-    fs.existsSync(path.join(cwd, ".claude/skills/ateam-start/SKILL.md"));
-  const hasCodex =
-    keys.some((k) => k.startsWith(".codex/")) ||
-    fs.existsSync(path.join(cwd, ".codex/hooks.json"));
+  if (selection.status === "corrupt") {
+    console.error(
+      "  warn: .ateam/.platforms.json is invalid " +
+        `(${selection.reason}); falling back to platform detection. ` +
+        "Re-run `ateam init` to rewrite the selection.",
+    );
+  }
 
-  if (hasQoder) platforms.push("qoder");
-  if (hasClaude) platforms.push("claude");
-  if (hasCodex) platforms.push("codex");
-  return platforms.length ? platforms : ["qoder", "claude", "codex"];
+  const detected = detectConfiguredPlatforms(cwd);
+  return detected.length ? detected : HOST_PLATFORMS.slice();
 }
 
 export async function update(flags = {}) {
@@ -97,7 +104,8 @@ export async function update(flags = {}) {
 
   saveHashes(cwd, hashes);
 
-  console.log(`\nateam update — ${platforms.join(", ")}`);
+  const platformLabel = platforms.length ? platforms.join(", ") : "none (generic .agents/skills only)";
+  console.log(`\nateam update — ${platformLabel}`);
   console.log(`  updated : ${updated}`);
   console.log(`  kept    : ${skipped} (locally modified)`);
   console.log(`  runtime : ${runtimeKept} (board/leader state, never overwritten)`);

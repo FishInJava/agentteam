@@ -24,7 +24,10 @@ Init options:
                      Default: qoder,claude,codex (agents core is always written)
   --user <name>      Developer identity (default: git config user.name)
   --force            Overwrite existing template files (runtime board data is kept)
-  --yes, -y          Non-interactive (same as default; at team has no prompts)
+  --yes, -y          Non-interactive: install the default platforms (qoder,claude,codex).
+                     Without --platform or --yes, init prompts on an interactive terminal;
+                     a non-interactive terminal fails with an actionable error and
+                     writes no files.
 
 What it writes:
   .ateam/            board (fact-intent graph) + doctrine + Python state scripts
