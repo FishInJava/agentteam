@@ -40,7 +40,9 @@ export const PLATFORM_SELECTION_PATH = ".ateam/.platforms.json";
 export function detectConfiguredPlatforms(cwd, hashes = loadHashes(cwd)) {
   const keys = hashes && typeof hashes === "object" ? Object.keys(hashes) : [];
   return HOST_PLATFORMS.filter((name) => {
-    if (keys.some((key) => key.startsWith(`${name}/`))) return true;
+    // Hash keys are repo-relative paths with a leading dot (e.g.
+    // ".claude/settings.json"), so normalize before matching the host prefix.
+    if (keys.some((key) => key.replace(/^\./, "").startsWith(`${name}/`))) return true;
     const markers = [PLATFORM_MARKERS[name], ...LEGACY_PLATFORM_MARKERS[name]];
     return markers.some((rel) => fs.existsSync(path.join(cwd, ...rel.split("/"))));
   });
