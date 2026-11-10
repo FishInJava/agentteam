@@ -38,6 +38,16 @@ function runAteemResult(cwd, args) {
     stdio: "pipe",
   });
 }
+/** Every file under dir as sorted posix-relative paths (zero-write assertions). */
+function listFiles(dir, base = dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listFiles(full, base));
+    else out.push(path.relative(base, full).split(path.sep).join("/"));
+  }
+  return out.sort();
+}
 function py(args) {
   return run(PY[0], [...PY.slice(1), ...args]);
 }
@@ -383,6 +393,72 @@ try {
   assert(
     String(mutexNoPlatform.stderr).includes("mutually exclusive"),
     "mutex check did not run before platform resolution",
+  );
+
+  // 8. Non-regular targets (here: a directory) are never written. --force
+  // aborts before writing anything: no partial install, no .tmp debris.
+  const nonRegularDir = mkTemp();
+  const blockedTarget = path.join(nonRegularDir, ".ateam/workflow.md");
+  fs.mkdirSync(blockedTarget, { recursive: true });
+  fs.writeFileSync(path.join(blockedTarget, "inner.txt"), "user data\n");
+  const blockedFileList = listFiles(nonRegularDir);
+
+  const forceBlocked = runAteemResult(nonRegularDir, [
+    "init", "--platform", "agents", "--force", "--user", "smoketest",
+  ]);
+  assert(forceBlocked.status !== 0, `init --force with a directory target exited ${forceBlocked.status}`);
+  const forceBlockedStderr = String(forceBlocked.stderr || "");
+  assert(
+    forceBlockedStderr.includes("ateam init stopped — 1 path(s) are not regular files:"),
+    `init --force non-regular stop message missing or misspelled:\n${forceBlockedStderr}`,
+  );
+  assert(
+    forceBlockedStderr.includes(".ateam/workflow.md"),
+    "init --force non-regular stop list missing the directory path",
+  );
+  assert(
+    forceBlockedStderr.includes("No files were written."),
+    "init --force non-regular stop missing the zero-write line",
+  );
+  assert(/move|remove/i.test(forceBlockedStderr), "init --force non-regular stop does not say to move/remove");
+  assert(
+    JSON.stringify(listFiles(nonRegularDir)) === JSON.stringify(blockedFileList),
+    "init --force wrote files despite a non-regular target",
+  );
+  assert(
+    !listFiles(nonRegularDir).some((rel) => rel.includes(".tmp")),
+    "init --force left .tmp debris",
+  );
+
+  // Default mode keeps its existing conflict-stop behavior for the same target.
+  const defaultBlocked = runAteemResult(nonRegularDir, ["init", "--platform", "agents", "--user", "smoketest"]);
+  assert(defaultBlocked.status !== 0, `default init with a directory target exited ${defaultBlocked.status}`);
+  assert(
+    String(defaultBlocked.stderr).includes("existing file(s) differ from the template:"),
+    "default non-regular stop message changed",
+  );
+  assert(
+    JSON.stringify(listFiles(nonRegularDir)) === JSON.stringify(blockedFileList),
+    "default init wrote files despite a non-regular target",
+  );
+
+  // --keep-existing treats the directory as existing, writes the rest, and
+  // never touches the directory contents.
+  const keepNonRegular = runAteemResult(nonRegularDir, [
+    "init", "--platform", "agents", "--user", "smoketest", "--keep-existing",
+  ]);
+  assert(keepNonRegular.status === 0, `--keep-existing with a directory target exited ${keepNonRegular.status}`);
+  assert(
+    fs.readdirSync(blockedTarget).join(",") === "inner.txt",
+    "--keep-existing touched the directory target",
+  );
+  assert(
+    fs.existsSync(path.join(nonRegularDir, ".ateam/config.json")),
+    "--keep-existing did not install the remaining files",
+  );
+  assert(
+    !listFiles(nonRegularDir).some((rel) => rel.includes(".tmp")),
+    "--keep-existing left .tmp debris",
   );
 
   // 7. Invalid host JSON is warned about and left byte-for-byte untouched.

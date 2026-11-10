@@ -53,9 +53,9 @@ function printPathList(label, paths) {
 
 /**
  * Compare a target against the bytes this run would write.
- * Returns "absent" | "same" | "different". Anything that exists but is not a
- * regular file (directory, symlink, device, unreadable) counts as "different"
- * so a preflight stop happens before init ever tries to write over it.
+ * Returns "absent" | "same" | "different" | "non-regular". Anything that
+ * exists but is not a regular file (directory, symlink, device) is reported
+ * as "non-regular" so callers can refuse to write over it.
  */
 function compareTarget(target, content) {
   let stat;
@@ -64,7 +64,7 @@ function compareTarget(target, content) {
   } catch {
     return "absent";
   }
-  if (!stat.isFile()) return "different";
+  if (!stat.isFile()) return "non-regular";
   try {
     return fs.readFileSync(target).equals(Buffer.from(content, "utf8")) ? "same" : "different";
   } catch {
@@ -177,13 +177,16 @@ export async function init(flags = {}) {
   // Preflight: compare every file this run would write or merge against disk.
   // Byte-identical files are not conflicts; runtime data (PROTECTED) and
   // .developer/.version are owned by other mechanisms and excluded.
+  // Non-regular targets (directories, symlinks) are collected separately:
+  // --force cannot atomically replace them, so it must abort before writing.
   const planned = new Map([...scaffoldWritable, ...scaffoldProtected, ...platformFiles]);
   const conflicts = [];
+  const nonRegular = [];
   for (const [rel, content] of planned) {
+    const status = compareTarget(path.join(cwd, ...rel.split("/")), content);
+    if (status === "non-regular") nonRegular.push(rel);
     if (PROTECTED.has(rel)) continue;
-    if (compareTarget(path.join(cwd, ...rel.split("/")), content) === "different") {
-      conflicts.push(rel);
-    }
+    if (status === "different" || status === "non-regular") conflicts.push(rel);
   }
 
   // Default mode: fail fast with a zero-write exit when anything conflicts.
@@ -199,6 +202,21 @@ export async function init(flags = {}) {
     );
     console.error("  --keep-existing   keep conflicting files and install the rest");
     console.error("  or move the conflicting files out of the way and re-run `ateam init`.");
+    process.exitCode = 1;
+    return;
+  }
+
+  // --force cannot atomically replace a directory/symlink (rename fails with
+  // EPERM on Windows). Abort before any write/merge/ensureDir so there is no
+  // partial install and no .tmp debris.
+  if (mode === "force" && nonRegular.length) {
+    console.error(`ateam init stopped — ${nonRegular.length} path(s) are not regular files:`);
+    for (const line of cappedPathLines(nonRegular)) console.error(line);
+    console.error("");
+    console.error("No files were written.");
+    console.error(
+      "  remove or move these paths out of the way and re-run `ateam init` (--force cannot overwrite them).",
+    );
     process.exitCode = 1;
     return;
   }
@@ -220,8 +238,17 @@ export async function init(flags = {}) {
     // Everything already on disk stays untouched in these modes: identical
     // template files are skipped, protected runtime data is never written,
     // and conflicting files were either kept by --keep-existing or would
-    // have stopped the run above.
-    keptExisting = [...new Set([...planned.keys()].filter(exists).concat(extraOwned.filter(exists)))];
+    // have stopped the run above. Non-regular targets are never written in
+    // any mode; --keep-existing keeps them as "existing" (--force aborted
+    // above when any were present).
+    for (const rel of new Set(nonRegular)) {
+      scaffoldWritable.delete(rel);
+      scaffoldProtected.delete(rel);
+      platformFiles.delete(rel);
+    }
+    keptExisting = [
+      ...new Set([...planned.keys()].filter(exists).concat(extraOwned.filter(exists), nonRegular)),
+    ];
 
     // Existing host hook configs are never merged (or rewritten) outside
     // --force: default mode only gets here when they are byte-identical, and
