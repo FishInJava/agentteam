@@ -126,6 +126,9 @@ ateam update
 `.codex/`；想改选择，重跑一次 `ateam init` 即可（已有文件冲突时按下文「同名文件与已有项目」处理）。
 普通 `update` 只刷新没被你改过的模板文件，
 本地改过的会保留并列出冲突，`update --force` 才会覆盖它们（宿主配置与运行数据仍不在此列）。
+`update` 写盘前也会预检非普通目标：目标路径是目录/符号链接等会直接中止（`--force` 同样中止），
+列出路径并零写入。所有命令都会先校验旗标，拼错（如 `ateam init --keep-existng`）会报
+`unknown option --keep-existng` 并退出，不执行任何操作。
 
 完整板子命令（fact / intent / acceptance / hint / handover / consumption）见
 [.ateam/workflow.md 模板](templates/scaffold/workflow.md) 与 [docs/board-schema.md](docs/board-schema.md)。
@@ -152,8 +155,8 @@ ateam update
 `.ateam/workspace/handover.md`——它们永远原样保留，既不写入也不触发默认停止；
 `--force` 对任何非普通目标都会在写盘前中止并列出这些路径（先移走/删除再跑，
 `--force` 无法覆盖）；`--keep-existing` 则保留它们并安装其余文件。
-`update` 的规则不变：宿主配置与运行数据仍永不覆盖，合并失败只会产生警告，不会把文件冲掉，
-修好 JSON 后重跑即可。
+`update` 也永不覆盖宿主配置与运行数据；合并失败只会产生警告，不会把文件冲掉，修好 JSON 后
+重跑即可。宿主配置的 `hooks` 若是不支持的形状（例如数组），同样告警并原样保留。
 
 **重跑 init 改平台**：`.ateam/.platforms.json` 会按新的 `--platform` 选择重写，之后的 `update`
 也只刷新新选择。若之前装过、且宿主配置里已有你自己的 hooks/权限，重跑默认会因宿主配置与模板

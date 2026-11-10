@@ -3,6 +3,38 @@
 按时间倒序，记录 ateam 自身演进中值得永久保留的教训。板子（`.ateam/`）是生成物不入库，
 因此产品级教训必须落到本文件。
 
+## 2026-11-10 晚 — 审计 Batch 2（清理静默失败）
+
+### 修复内容
+
+- `update` 非普通目标：任何 merge / 写盘之前 lstat 全部已存在目标；目录、符号链接、不可读
+  目标即中止，stderr 精确头 `ateam update stopped — N path(s) are not regular files:` + 路径 +
+  `No files were written.`，exit 1；`--force` 同样中止。`--force` 的语义因此收紧为「覆盖普通文件
+  冲突，不覆盖非普通目标」——force 不是万能钥匙。
+- `context`：`splitCommand` 按空白切分命令（`py -3` → `["py","-3"]`）；spawn 失败 / null status
+  明确报错并 exit 1。模板 8 个 md 的 37 处 `python .ateam/scripts` 改为 `{{PYTHON_CMD}}`，
+  安装后渲染为实际命令，模板源文件不再硬编码解释器名。
+- handover 占位符：去掉裸 `TODO` 判定；优先识别 sentinel `<!-- ATEAM_HANDOVER_PLACEHOLDER -->`
+  （写进模板 handover.md），其次 `（待写）`。真实交接正文含 `TODO: fix X` 不再被误判为占位。
+- hooks 合并：matcher 感知去重（同 command 不同 matcher 都保留）；env 键合并（existing 优先、
+  补 incoming 缺失键）；顶层 `hooks` 为数组等不支持形状时告警且文件一个字节不动；无新增 entry/env
+  时返回 `changed=false`，`init --force` 与 `update` 都不重写（4 空格 JSON 字节不变）。
+- CLI 旗标白名单：每命令先校验旗标再执行，未知/拼错旗标 → stderr `unknown option --x`、
+  exit 1、零副作用。`read_json` 解析失败打印 `warn: cannot parse <path>: <err>` 后返回默认值
+  （缺文件保持静默）。
+- 归档收尾：同秒归档目录追加 `-1`/`-2` 后缀，不嵌套；归档后重建四个实体目录并补 `.gitkeep`；
+  `list_entities` 按 ID 数值后缀排序（f1000 在 f999 之后）。
+
+### 验证与教训
+
+- 独立 verify 逐条真实复现，a006–a012 全 PASS。唯一 diff 清单偏离：`src/commands/init.js` 为
+  a009 的精确警告字符串做了一行前缀改动，属必要改动而非缺陷；预期清单应包含它。
+- Windows 创建符号链接返回 EPERM，符号链接目标只能靠 lstat 代码审查覆盖；smoke 会打印
+  「symlink preflight check skipped (EPERM)」，不要把跳过当成 PASS 证据。
+- 同秒归档碰撞用 monkeypatch 固定时钟验证后缀递增，比反复抢同秒可靠。
+- Worker report 的 `spent` 是自估，与平台实测用量可能差一倍（本次 64.5k vs 115k tokens）。
+  板子记账暂以报告为准，可用补充 `consumption add` 条目校正；后续报告协议可要求区分实测/自估。
+
 ## 2026-11-10 晚 — Worker skill 路由（存量 skill 进 mission）
 
 ### 机制
