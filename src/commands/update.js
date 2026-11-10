@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { atomicWrite } from "../lib/fsutil.js";
 import { buildScaffoldMap, PROTECTED_PATHS } from "../lib/scaffold.js";
-import { mergeExistingHookConfigs } from "../lib/hooks-merge.js";
+import { HOOK_CONFIG_PATHS, mergeExistingHookConfigs } from "../lib/hooks-merge.js";
 import { resolvePythonCommand } from "../lib/python.js";
 import { loadHashes, saveHashes, sha256 } from "../lib/hashes.js";
 import {
@@ -57,7 +57,13 @@ export async function update(flags = {}) {
 
   const merged = mergeExistingHookConfigs(cwd, desired);
   for (const warning of merged.warnings) {
-    console.warn(`  warn: could not merge existing hooks (${warning})`);
+    console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
+  }
+  // Host hook configs are merge-only, even under --force: after the merge
+  // attempt, drop every on-disk host config from the desired set so a failed
+  // merge can never fall through to atomicWrite below.
+  for (const rel of HOOK_CONFIG_PATHS) {
+    if (fs.existsSync(path.join(cwd, ...rel.split("/")))) desired.delete(rel);
   }
 
   let updated = 0;

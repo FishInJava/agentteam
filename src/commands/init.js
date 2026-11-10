@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { ensureDir, writeTemplateMap, atomicWrite } from "../lib/fsutil.js";
 import { buildScaffoldMap, PROTECTED_PATHS } from "../lib/scaffold.js";
-import { mergeExistingHookConfigs } from "../lib/hooks-merge.js";
+import { HOOK_CONFIG_PATHS, mergeExistingHookConfigs } from "../lib/hooks-merge.js";
 import { resolvePythonCommand } from "../lib/python.js";
 import { recordHashes } from "../lib/hashes.js";
 import {
@@ -32,6 +32,18 @@ const RUNTIME_DIRS = [
 ];
 // Runtime-owned files: seeded on first init, never overwritten (even by --force).
 const PROTECTED = PROTECTED_PATHS;
+
+const PATH_LIST_LIMIT = 20;
+
+/** Print a capped, one-per-line list of repo-relative paths. */
+function printPathList(label, paths) {
+  if (!paths.length) return;
+  console.log(`  ${label}: ${paths.length}`);
+  for (const rel of paths.slice(0, PATH_LIST_LIMIT)) console.log(`    - ${rel}`);
+  if (paths.length > PATH_LIST_LIMIT) {
+    console.log(`    ... and ${paths.length - PATH_LIST_LIMIT} more`);
+  }
+}
 
 /** A terminal where the interactive picker can actually run. */
 function isInteractiveTTY() {
@@ -120,6 +132,46 @@ export async function init(flags = {}) {
     if (PROTECTED.has(rel)) scaffoldProtected.set(rel, content);
     else scaffoldWritable.set(rel, content);
   }
+
+  const platformFiles = collectPlatformFiles(platforms, vars);
+
+  const exists = (rel) => fs.existsSync(path.join(cwd, ...rel.split("/")));
+  const extraOwned = [".ateam/.developer", ".ateam/.version"];
+
+  // --force: announce every existing file this run is about to overwrite,
+  // before any write happens. Host hook configs are excluded: they are
+  // merged below, never overwritten.
+  if (mode === "force") {
+    const overwritten = [
+      ...[...scaffoldWritable.keys()].filter(exists),
+      ...[...platformFiles.keys()].filter((rel) => !HOOK_CONFIG_PATHS.has(rel) && exists(rel)),
+      ...extraOwned.filter(exists),
+    ];
+    printPathList("overwriting (existing)", [...new Set(overwritten)]);
+  }
+
+  // Existing host hook configs are always merged — in every mode — and then
+  // removed from the write map, including on merge failure, so a template
+  // write (even --force) can never clobber user hooks/permissions/env.
+  const merged = mergeExistingHookConfigs(cwd, platformFiles);
+  for (const warning of merged.warnings) {
+    console.warn(`  warn: could not merge existing hooks (${warning}); file left untouched`);
+  }
+
+  let keptExisting = [];
+  if (mode !== "force") {
+    keptExisting = [
+      ...new Set([
+        ...[...scaffoldWritable.keys(), ...scaffoldProtected.keys(), ...platformFiles.keys()].filter(
+          exists,
+        ),
+        ...extraOwned.filter(exists),
+        ...merged.preserved,
+      ]),
+    ];
+    printPathList("kept (existing)", keptExisting);
+  }
+
   const scaffoldResult = writeTemplateMap(cwd, scaffoldWritable, mode);
   const protectedResult = writeTemplateMap(cwd, scaffoldProtected, "skip");
   scaffoldResult.written.push(...protectedResult.written);
@@ -140,13 +192,6 @@ export async function init(flags = {}) {
     atomicWrite(versionFile, `${VERSION}\n`);
   }
 
-  const platformFiles = collectPlatformFiles(platforms, vars);
-  if (mode !== "force") {
-    const merged = mergeExistingHookConfigs(cwd, platformFiles);
-    for (const warning of merged.warnings) {
-      console.warn(`  warn: could not merge existing hooks (${warning})`);
-    }
-  }
   const platformResult = writeTemplateMap(cwd, platformFiles, mode);
 
   recordHashes(cwd, new Map([...scaffold, ...platformFiles]));
@@ -160,7 +205,10 @@ export async function init(flags = {}) {
   );
 
   const written = scaffoldResult.written.length + platformResult.written.length;
-  const skipped = scaffoldResult.skipped.length + platformResult.skipped.length;
+  const skipped =
+    mode === "force"
+      ? scaffoldResult.skipped.length + platformResult.skipped.length
+      : keptExisting.length;
   const platformLabel = platforms.length ? platforms.join(", ") : "none";
 
   console.log(`\nateam ${isFirst ? "initialized" : "updated"} in ${cwd}`);

@@ -45,24 +45,31 @@ export function mergeHookSettings(existingText, incomingText) {
 
 /**
  * Merge our hooks into hook-config files that already exist on disk.
- * Mutates `files` in place (removes merged paths so they are not hashed as
- * templates). Returns { handled, warnings }.
+ * Mutates `files` in place: every hook-config path that exists on disk is
+ * removed from the map, whether the merge succeeded or failed, so no caller
+ * (including `--force`) can ever overwrite user-owned host configuration.
+ * Returns { handled, preserved, warnings }.
  */
 export function mergeExistingHookConfigs(cwd, files) {
   const handled = [];
+  const preserved = [];
   const warnings = [];
   for (const rel of [...files.keys()]) {
     if (!HOOK_CONFIG_PATHS.has(rel)) continue;
     const target = path.join(cwd, ...rel.split("/"));
     if (!fs.existsSync(target)) continue;
+    preserved.push(rel);
     try {
       const merged = mergeHookSettings(fs.readFileSync(target, "utf8"), files.get(rel));
       atomicWrite(target, merged);
       handled.push(rel);
-      files.delete(rel);
     } catch (error) {
+      // Leave the file byte-for-byte untouched and still drop it from the
+      // write map: a merge failure must never downgrade to a clobber.
       warnings.push(`${rel}: ${error && error.message ? error.message : error}`);
+    } finally {
+      files.delete(rel);
     }
   }
-  return { handled, warnings };
+  return { handled, preserved, warnings };
 }
