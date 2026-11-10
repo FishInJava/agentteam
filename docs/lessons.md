@@ -3,6 +3,35 @@
 按时间倒序，记录 ateam 自身演进中值得永久保留的教训。板子（`.ateam/`）是生成物不入库，
 因此产品级教训必须落到本文件。
 
+## 2026-11-10 晚 — smoke 封闭性（宿主 PROJECT_DIR 环境泄漏）
+
+### 根因
+
+- `hook_session_start.py` 的 `_project_root` 优先读 `QODER/CLAUDE/CODEX/ATEAM_PROJECT_DIR`，其次
+  `payload.cwd`；`.ateam` 不存在时静默 `return 0`。Agent 宿主注入的 `CLAUDE_PROJECT_DIR` 被
+  smoke 的 `hookRun` 继承 → hook 解析到没有 `.ateam` 的目录 → 空 stdout → `JSON.parse` 抛
+  无指向的 `SyntaxError`（旧 `test/smoke.mjs:857`）。
+- 教训：测试进程必须与宿主环境隔离；任何「从环境变量推断项目根」的组件都会把宿主状态带进测试。
+
+### 修复
+
+- smoke：四变量常量化；模块顶部从 `process.env` 删除；`hookRun` 显式传剥净的 env，并设
+  `PYTHONDONTWRITEBYTECODE=1` 防测试写模板 `__pycache__`。回归用例逐一污染四个变量后仍注入
+  真实 handover；无 `.ateam` 用例断言 exit 0 / stdout 空 / stderr 含诊断。
+- hook：缺 `.ateam` 时 stderr 打印解析路径与来源（环境变量名或 `cwd`），仍 exit 0、stdout 空；
+  正常路径的 JSON 输出与旧版逐字节一致（实测 631 bytes）。
+- 验证法：在旧 commit 的临时 `git worktree` 里用污染 env 复现崩溃（exit 1），再在新分支同条件
+  PASS——证明回归用例有真实失败模式，而不是空断言。
+- 手动直接运行模板 hook 且不设 `PYTHONDONTWRITEBYTECODE=1` 会生成
+  `templates/scaffold/scripts/__pycache__`（标准 Python 行为）；suite 内已规避，不要提交该目录。
+
+### 开源卫生
+
+- 全历史扫描（21 个提交）未发现盘符、绝对路径、用户名、home 目录或 IP：`G:\`、`C:/Users`、
+  `000WorkWork`、`admin` 均零命中。原有本地痕迹只有 README 的本地参考目录表与 lessons 一处
+  提及，已移除/泛化；`.gitignore` 保留两个本地目录条目（防止本地 clone 变 untracked），
+  提交作者邮箱仍存在于 git 元数据（是否改写由用户决定）。
+
 ## 2026-11-10 晚 — 审计 Batch 2（清理静默失败）
 
 ### 修复内容
@@ -121,7 +150,7 @@
 ### watchdog 删除（方案 C）
 
 - 被动脚本无法复活 Leader，`restart_count` 语义虚假 → 全删；死线检查并入 Leader 每轮 OODA 自查。
-- 教训：机制性组件要追问「谁在执行」；先对照参考实现（sapper-v2-master）再决定保留什么。
+- 教训：机制性组件要追问「谁在执行」；先对照本地参考实现再决定保留什么。
 
 ### board 渲染改造（i005，三次派单）
 

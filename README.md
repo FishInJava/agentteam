@@ -56,7 +56,7 @@ ateam init --yes                     # CI / 脚本：不问，装默认 qoder + 
 
 ## 仓库目录结构
 
-本仓库的目录分三类，注意区分：**跟踪的源码/资产**、**`ateam init` 在目标项目生成的目录**、**本地参考资料**。不要把它们与上方「`ateam init` 会铺出」的树混淆。
+本仓库的目录分两类，注意区分：**跟踪的源码/资产**、**`ateam init` 在目标项目生成的目录**。不要把它们与上方「`ateam init` 会铺出」的树混淆。
 
 ### 一、随仓库跟踪的源码与资产
 
@@ -84,20 +84,13 @@ ateam init --yes                     # CI / 脚本：不问，装默认 qoder + 
 
 这些目录由 `.gitignore` 忽略。本仓库根目录当前就有一份本地生成物；clone 后执行 `npm link && ateam init` 即可重建。
 
-### 三、本地参考资料（不进入仓库）
-
-| 路径 | 作用 |
-|---|---|
-| `Cairn-main/` | 本地 clone 的参考实现，已被 `.gitignore` 忽略，不在仓库与 npm 包中 |
-| `sapper-v2-master/` | 本地 clone 的参考实现，已被 `.gitignore` 忽略，不在仓库与 npm 包中 |
-
-### 根文件
+### 三、根文件
 
 | 文件 | 作用 |
 |---|---|
 | `README.md` | 本文件：项目介绍、快速开始、目录结构、日常使用 |
 | `package.json` | npm 包元数据：`bin` 命令、`files` 发布清单、`npm run smoke`、Node 版本要求 |
-| `.gitignore` | 忽略 `node_modules/`、Python 缓存、`ateam init` 生成物与本地参考实现 |
+| `.gitignore` | 忽略 `node_modules/`、Python 缓存、`ateam init` 生成物与本地目录 |
 
 （`.git/` 仅为 Git 元数据目录，不参与上述分类。）
 
