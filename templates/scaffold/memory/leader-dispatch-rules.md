@@ -10,5 +10,6 @@
 - 超时先判产出：Worker 正在写码 → 只查进度、不打断；空转 → conclude 抢救，收割已确认进展成 fact。
 - 产投比监控：token 消耗必须与代码/证据产出成比例；消耗大产出少 = 换角度或按升级阶梯升模型档。
 - 派单前禁止让 Worker 全量读码：侦察成果内嵌进 mission，写明「禁止再侦察，按 fact 定点改」。
+- 技能路由：每单只带 0–2 个与本切片直接相关的 skill，文件路径 / host skill 名经 `intent add --skills` 传入；ateam 自带的 start/continue/finish 不派给 Worker，外部 skill 先审再路由。
 - 兼容红线写死进 mission（测试断言、JSON 契约、stdout 契约）；Worker 自测必须包含既有测试。
 - 第三次派单还失败 → 先拆分任务/补 recon 盲区，不要重复同一个角度。

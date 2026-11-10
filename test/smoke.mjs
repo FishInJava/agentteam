@@ -41,6 +41,22 @@ function runAteemResult(cwd, args) {
 function py(args) {
   return run(PY[0], [...PY.slice(1), ...args]);
 }
+/** Run board.py via Python; returns spawnSync result (status/stdout/stderr). */
+function pyResult(args) {
+  return spawnSync(PY[0], [...PY.slice(1), ...args], {
+    cwd: tmp,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+}
+function normalizeSlashes(value) {
+  return String(value).replace(/\\/g, "/");
+}
+/** Compare paths independent of separator style and (on Windows) drive/path case. */
+function normalizePathCase(value) {
+  const normalized = normalizeSlashes(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -129,6 +145,49 @@ try {
     "--title", "t", "--description", "d", "--kind", "note",
   ]).trim();
   assert(/^f\d{3}$/.test(factId), "fact id not returned");
+
+  // Skill routing (mission i001): intents carry skills; mission render emits them.
+  fs.mkdirSync(path.join(tmp, "skills", "tdd"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "skills/tdd/SKILL.md"), "# TDD\n");
+  const skillIntent = py([
+    ".ateam/scripts/board.py", "intent", "add",
+    "--from", factId,
+    "--task-type", "chore",
+    "--description", "x",
+    "--skills", "skills/tdd/SKILL.md,host:code-review",
+  ]).trim();
+  const skillMission = py([".ateam/scripts/board.py", "mission", "render", skillIntent]);
+  assert(skillMission.includes("## Skills (load before working)"), "mission missing skills section");
+  const skillAbs = normalizePathCase(fs.realpathSync(path.join(tmp, "skills/tdd/SKILL.md")));
+  assert(
+    normalizePathCase(skillMission).includes(skillAbs),
+    `mission missing resolved skill path ${skillAbs}`,
+  );
+  assert(skillMission.includes("host:code-review"), "mission missing host skill name");
+  assert(
+    skillMission.includes("Rules: load only the skills listed here"),
+    "mission missing skills rules line",
+  );
+
+  // A missing skill file warns on stderr but never fails rendering.
+  const missingSkillIntent = py([
+    ".ateam/scripts/board.py", "intent", "add",
+    "--task-type", "chore",
+    "--description", "x",
+    "--skills", "missing/SKILL.md",
+  ]).trim();
+  const missingRender = pyResult([
+    ".ateam/scripts/board.py", "mission", "render", missingSkillIntent,
+  ]);
+  assert(missingRender.status === 0, `mission render with missing skill exited ${missingRender.status}`);
+  assert(
+    String(missingRender.stderr).includes("warn: skill not found"),
+    "mission render did not warn about a missing skill",
+  );
+  assert(
+    normalizeSlashes(missingRender.stdout).includes("missing/SKILL.md"),
+    "mission render dropped the missing skill entry from stdout",
+  );
 
   // Watchdog removal (mission i004): no watchdog script/command/role/config keys;
   // deadline self-check moved into the Leader OODA loop.

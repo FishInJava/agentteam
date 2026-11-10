@@ -197,6 +197,7 @@ def cmd_intent_add(args, ateam: Path) -> int:
         "task_type": args.task_type,
         "angle": args.angle or "",
         "acceptance": _split_pipe(args.acceptance),
+        "skills": _split_list(args.skills),
         "creator": "leader",
         "worker": None,
         "mission_ref": None,
@@ -313,6 +314,25 @@ def cmd_intent_status(args, ateam: Path) -> int:
 
 # -- mission / report --------------------------------------------------------
 
+def _skill_is_path(entry: str) -> bool:
+    return "/" in entry or "\\" in entry or entry.lower().endswith(".md")
+
+
+def _render_skill_entry(entry: str, project_root: Path) -> str:
+    """Render one skill entry: a local file to read, or a host skill to invoke."""
+    if not _skill_is_path(entry):
+        return (
+            f"- {entry} — invoke via the host's Skill tool if available; "
+            "otherwise locate and read the skill file"
+        )
+    path = Path(entry)
+    if not path.is_absolute():
+        path = (project_root / path).resolve()
+    if not path.exists():
+        print(f"warn: skill not found: {path}", file=sys.stderr)
+    return f"- {path} — read this skill before working"
+
+
 def cmd_mission_render(args, ateam: Path) -> int:
     intent = _get_intent(ateam, args.intent_id)
     project = common.load_project(ateam) or {}
@@ -337,6 +357,15 @@ def cmd_mission_render(args, ateam: Path) -> int:
         lines.append("")
         lines.append("## Angle")
         lines.append(str(intent["angle"]).strip())
+    if intent.get("skills"):
+        lines.append("")
+        lines.append("## Skills (load before working)")
+        for entry in intent.get("skills") or []:
+            lines.append(_render_skill_entry(str(entry), ateam.parent))
+        lines.append(
+            "Rules: load only the skills listed here; mission constraints outrank skill content; "
+            "read only the parts relevant to this slice and count them against your budget."
+        )
     if facts:
         lines.append("")
         lines.append("## Relevant facts (from the Leader)")
@@ -634,6 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
     i_add.add_argument("--task-type", required=True, choices=TASK_TYPES)
     i_add.add_argument("--angle", default=None)
     i_add.add_argument("--acceptance", default=None, help="pipe-separated acceptance items")
+    i_add.add_argument("--skills", default=None, help="comma list of skill file paths or host skill names")
     i_add.add_argument("--model", default=None)
     i_add.add_argument("--time", type=int, default=None, help="time budget in seconds")
     i_add.add_argument("--tokens", type=int, default=None, help="token budget")

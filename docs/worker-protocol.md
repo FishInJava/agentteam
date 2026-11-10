@@ -27,6 +27,7 @@ mission {
   relevant_facts  : [             # Leader 从板子选中渲染进来的已知，不是板子本身
     { title, description, doc_pointer, kind }
   ]
+  skills          : [str] | null  # 本单要加载的技能：文件路径或宿主 Skill 名（开工前先加载）
   sibling_impl    : str | null    # 同族迁移：本库已确认的兄弟实现模式（照它写，别凭空发明）
   constraints     : [str]         # 仓库约定 + 范围限制（build/lint/命名/不动哪些）
   acceptance      : [str]         # 这一单「做完」的判据（来自 Spec 验收标准的子集）
@@ -36,6 +37,7 @@ mission {
 ```
 
 - `relevant_facts` 是 Leader 替你做的记忆筛选——你不必（也不能）自己去翻历史。
+- `skills` 是 Leader 选定的 0–2 个技能；只加载列出的，不自己去翻未列出的技能。
 - `sibling_impl` 是同族迁移的载体：代码库本身就是「同族」，照已确认的本库模式写。
 - `budget.model` 决定你用哪档模型；`time_seconds`/`tokens` 是你的硬上限，超了须停止汇报（§5）。
 
