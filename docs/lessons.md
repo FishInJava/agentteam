@@ -3,6 +3,35 @@
 按时间倒序，记录 ateam 自身演进中值得永久保留的教训。板子（`.ateam/`）是生成物不入库，
 因此产品级教训必须落到本文件。
 
+## 2026-11-10 晚 — init 同名文件 fail-fast（默认停止）
+
+### 行为矩阵
+
+- 默认 `init`：任何写盘之前预检；目标文件已存在且内容与模板不同 → 停止（exit 1）、列冲突
+  （20 条封顶 + 余数）、给出三条出路（`--force` / `--keep-existing` / 先移走），**零写入**。
+- `--keep-existing`：保留全部冲突文件（宿主配置也不 merge），补装缺失文件——旧默认 skip 语义显式化。
+- `--force`：覆盖模板冲突并先打印 `overwriting (existing)`；宿主 hook 配置仍只合并不整体覆盖；
+  PROTECTED 运行数据不动。
+- 逐字节相同不算冲突；`--force` 与 `--keep-existing` 互斥，校验先于平台解析。
+- 非普通文件目标（目录/符号链接）：默认视为冲突停止；`--force` 也在写盘前中止（防半装）；
+  PROTECTED 运行数据路径例外——本来就不写、不触发默认停止。
+
+### 设计教训
+
+- 预检必须零副作用：先构建写盘 map、逐文件比对，判定后再 merge/ensureDir/atomicWrite。
+- 「同名」不能只有 skip/force 两档：安全默认 = fail-fast + 显式出路；隐式保留会让用户误以为已安装。
+- 独立 verify 再次抓到实现者自测盲区：`--force` 遇目录目标先写 31 个文件再 EPERM，留下半装与
+  `.tmp`。修复单复用原 Worker 上下文（SendMessage），成本低；verify 复验同一分支后 ff 合并。
+- 清单 20 条封顶可能隐藏关键路径（如宿主配置）；需要时把冲突/宿主配置优先排序或加摘要。
+
+### 框架教训
+
+- `board.py report ingest` 优先读报告内的 `mission_ref`，CLI `--mission-ref` 不能覆盖；自拟 verify
+  mission 必须在 prompt 里写死 `mission_ref` = intent id（或 board 生成的 `m-iXXX`）。
+- `board.py project init --force` 只替换 project.json，不清空 facts/intents/acceptance/counters；
+  新项目开局要先归档旧图（本次归档至 `.ateam/workspace/archive/2026-11-10-prev/` 并归零 counters）。
+- worktree 分支上的小修补/文档修正用 SendMessage 复用原 Worker，省 context 也省重新侦察。
+
 ## 2026-11-10 下午 — 交互式 init、同名文件安全、记忆入仓
 
 ### 交互式 init（S1/S2）

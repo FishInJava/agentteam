@@ -11,4 +11,8 @@
 - 产投比监控：token 消耗必须与代码/证据产出成比例；消耗大产出少 = 换角度或按升级阶梯升模型档。
 - 派单前禁止让 Worker 全量读码：侦察成果内嵌进 mission，写明「禁止再侦察，按 fact 定点改」。
 - 兼容红线写死进 mission（测试断言、JSON 契约、stdout 契约）；Worker 自测必须包含既有测试。
+- 自拟 verify/chore mission 必须在任务书里写死 `mission_ref` = intent id（或 board 生成的
+  `m-iXXX`）：`report ingest` 优先报告内字段，CLI `--mission-ref` 不会覆盖，写错会导致入库失败。
+- worktree 分支上的小修补/文档修正优先用 SendMessage 复用原 Worker（省 context），修完由独立
+  verify 复验同一分支，再 ff 合并。
 - 第三次派单还失败 → 先拆分任务/补 recon 盲区，不要重复同一个角度。
