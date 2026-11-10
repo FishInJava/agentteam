@@ -70,7 +70,7 @@ ateam init --yes                     # CI / 脚本：不问，装默认 qoder + 
 
 其中 `bin/`、`src/`、`templates/`、`README.md` 会随 npm 包发布（`package.json` 的 `files`）；`test/`、`docs/` 仅在仓库内使用。
 
-特别说明：`templates/scaffold/memory/` 是长期记忆的事实源，`ateam init` 会把它铺到目标项目的 `.ateam/memory/`；`templates/scaffold/workflow.md` 的核心原则要求 Leader 会话启动先读这些文件。
+特别说明：`templates/scaffold/memory/` 是长期记忆的事实源，`ateam init` 会把它铺到目标项目的 `.ateam/memory/`；会话启动时 SessionStart hook 会把**看板摘要、上一轮 handover 与这些长期记忆文件**自动注入上下文（注入段缺失时才需手动读取）。
 
 ### 二、`ateam init` 在目标项目生成的目录（不跟踪、不随包分发）
 
@@ -101,7 +101,7 @@ ateam init --yes                     # CI / 脚本：不问，装默认 qoder + 
 python .ateam/scripts/board.py project init \
   --title "<需求>" --origin "<Spec 摘要>" --goal "<完成定义>"
 
-# 2. 看板摘要（宿主 SessionStart 也会自动注入）
+# 2. 看板摘要（宿主 SessionStart 也会自动注入，连同 handover 与长期记忆）
 python .ateam/scripts/get_context.py
 ateam context
 

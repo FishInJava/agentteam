@@ -42,6 +42,29 @@ def _read_handover(ateam: Path) -> str:
     return content.rstrip()
 
 
+def _read_memory(ateam: Path) -> str:
+    """Render `.ateam/memory/*.md` as one context section; "" when absent/empty."""
+    memory_dir = ateam / "memory"
+    if not memory_dir.is_dir():
+        return ""
+    sections = []
+    try:
+        files = sorted(memory_dir.glob("*.md"), key=lambda path: path.name)
+    except OSError:
+        return ""
+    for path in files:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not content.strip():
+            continue
+        sections.append(f"### {path.name}\n\n{content.rstrip()}")
+    if not sections:
+        return ""
+    return "## Long-term memory (.ateam/memory)\n\n" + "\n\n".join(sections)
+
+
 def _project_root(payload: dict) -> tuple[Path, str]:
     """Return (project root, source) where source is the env var name or "cwd"."""
     for var in PROJECT_ENV_VARS:
@@ -79,6 +102,9 @@ def main() -> int:
         "You are the Leader: read the board, decide, dispatch workers. Never write code or run tests yourself.\n\n"
         + text
     )
+    memory = _read_memory(ateam)
+    if memory:
+        context += f"\n\n{memory}"
     handover = _read_handover(ateam)
     if handover:
         context += f"\n\n## Handover (previous Leader)\n\n{handover}"

@@ -3,6 +3,33 @@
 按时间倒序，记录 ateam 自身演进中值得永久保留的教训。板子（`.ateam/`）是生成物不入库，
 因此产品级教训必须落到本文件。
 
+## 2026-11-11 — 长期记忆注入（文件存在 ≠ 自动加载）
+
+### 根因
+
+- `ateam init` 一直会铺 `.ateam/memory/*.md`，但没有任何组件把它们送进 Leader 上下文：
+  SessionStart hook 只注入看板摘要与 handover，`workflow.md` 仅要求 Leader「会话启动先读」，
+  依赖模型自觉，实际经常不读——文件存在不等于会生效。
+- 原生 Claude memory 按**项目目录**作用域（`~/.claude/projects/<project-dir>/memory/`），团队
+  仓库里的 `.ateam/memory/` 不在其自动加载路径上，因此必须显式注入。
+
+### 修复
+
+- `hook_session_start.py`：`.ateam` 存在时读取 `.ateam/memory/*.md`（按文件名排序、跳过空文件），
+  以 `## Long-term memory (.ateam/memory)` 段追加到 `additionalContext`，位置在看板摘要之后、
+  handover 之前；每个文件渲染为 `### <filename>` + 内容原文。JSON 输出契约与无 `.ateam` 行为不变。
+- 新增 `templates/scaffold/memory/leader-boundary-leniency.md`（Leader 读取边界放宽）；
+  `workflow.md` 原则 6 改为「hook 自动注入，注入段缺失才手动读」。
+- smoke：初始化项目断言注入段与记忆原文（`Leader 派单规则`、`Leader 读取边界`）；删除
+  `.ateam/memory/*.md` 后重跑 hook，断言该段消失且 handover 仍注入；无 `.ateam` 用例保持原样。
+
+### 教训
+
+- 记忆/上下文类资产必须验证「真的进了上下文」，只断言文件存在是假验证；端到端断言要落在宿主
+  可见的 `additionalContext` 上。
+- Worker 无长期记忆是**设计**：只有 Leader 会话注入 memory；Worker 仍靠 mission 内嵌的 fact
+  获取情报（规格注入而非记忆），不要顺手给 Worker 加记忆。
+
 ## 2026-11-10 晚 — smoke 封闭性（宿主 PROJECT_DIR 环境泄漏）
 
 ### 根因

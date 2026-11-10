@@ -12,9 +12,10 @@
 3. **一切落盘**：对话会压缩，文件不会。决策 → fact，教训 → lesson。
 4. **一次一个工作项**：mission 有界（目标 + 角度 + 验收 + 预算）。
 5. **沉淀教训**：任务后把新知识写回 fact / 手册。
-6. **长期记忆**：会话启动先读 `.ateam/memory/*.md`（派单规则、自主权、报告落盘、git 边界、OODA
-   等稳定行为准则的持久副本）。稳定教训要写回该目录；仓库内的事实源是
-   `templates/scaffold/memory/`，由 `ateam update` 同步到 `.ateam/`。
+6. **长期记忆**：SessionStart hook 会自动把 `.ateam/memory/*.md`（派单规则、自主权、报告落盘、
+   git 边界、OODA 等稳定行为准则的持久副本）注入会话上下文；只有注入段缺失时才需要手动读取
+   这些文件。稳定教训要写回该目录；仓库内的事实源是 `templates/scaffold/memory/`，由
+   `ateam update` 同步到 `.ateam/`。
 
 ## 角色
 

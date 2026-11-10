@@ -875,6 +875,18 @@ try {
     !placeholderContext.includes("## Handover (previous Leader)"),
     "placeholder handover template was injected",
   );
+  assert(
+    placeholderContext.includes("## Long-term memory (.ateam/memory)"),
+    "session-start hook did not inject the long-term memory section",
+  );
+  assert(
+    placeholderContext.includes("Leader 派单规则"),
+    "session-start hook did not inject memory file content",
+  );
+  assert(
+    placeholderContext.includes("Leader 读取边界"),
+    "session-start hook did not inject the newly scaffolded memory file",
+  );
   fs.writeFileSync(
     path.join(handoverDir, ".ateam/workspace/handover.md"),
     "# Handover\n\nDone: shipped the batch.\n\nTODO: fix X in the next session.\n\nNext: continue.\n",
@@ -901,6 +913,23 @@ try {
       delete process.env[varName];
     }
   }
+
+  // Removing every memory file drops the memory section from the context while
+  // the rest of the injection (board + handover) keeps working.
+  for (const name of fs.readdirSync(path.join(handoverDir, ".ateam/memory"))) {
+    if (name.endsWith(".md")) fs.rmSync(path.join(handoverDir, ".ateam/memory", name));
+  }
+  const noMemoryHook = hookRun(handoverDir);
+  assert(noMemoryHook.status === 0, `session-start hook without memory files exited ${noMemoryHook.status}`);
+  const noMemoryContext = JSON.parse(noMemoryHook.stdout).hookSpecificOutput.additionalContext;
+  assert(
+    !noMemoryContext.includes("## Long-term memory (.ateam/memory)"),
+    "long-term memory section was injected although .ateam/memory/*.md is empty",
+  );
+  assert(
+    noMemoryContext.includes("## Handover (previous Leader)"),
+    "handover injection regressed after emptying the memory dir",
+  );
 
   // No .ateam anywhere: exit 0 without stdout JSON, but say why on stderr.
   const noAteemDir = mkTemp();
