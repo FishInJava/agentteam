@@ -7,6 +7,7 @@
   "worktree"`；并行 ≥2 个写者时**强制** worktree。例外（必须在 mission 与 leader-state 写明理由）：
   串行单写者且需要访问未提交/未跟踪文件或 `.ateam` 运行时（如 `ateam update` 同步）→ 主工作区。
   worktree 派单前先把 Worker 需要看见的 Leader 文件提交；收尾流程：Leader 审 diff → 合并分支 → 清理 worktree。
+- **Agent worktree 基线实测**：`isolation: "worktree"` 基于会话启动时的 HEAD（本次为 origin/main），不是派单时 main 的最新提交。派单前若 Leader 有新提交且 Worker 必须看到，改用主工作区或先手动建新 worktree；收尾用普通 merge（非 ff），合并后重跑 smoke 再验收。
 - 超时先判产出：Worker 正在写码 → 只查进度、不打断；空转 → conclude 抢救，收割已确认进展成 fact。
 - 产投比监控：token 消耗必须与代码/证据产出成比例；消耗大产出少 = 换角度或按升级阶梯升模型档。
 - 派单前禁止让 Worker 全量读码：侦察成果内嵌进 mission，写明「禁止再侦察，按 fact 定点改」。
@@ -15,5 +16,5 @@
 - 自拟 verify/chore mission 必须在任务书里写死 `mission_ref` = intent id（或 board 生成的
   `m-iXXX`）：`report ingest` 优先报告内字段，CLI `--mission-ref` 不会覆盖，写错会导致入库失败。
 - worktree 分支上的小修补/文档修正优先用 SendMessage 复用原 Worker（省 context），修完由独立
-  verify 复验同一分支，再 ff 合并。
+  verify 复验同一分支，再合并（分支基线等于当前 main HEAD 时才可用 ff）。
 - 第三次派单还失败 → 先拆分任务/补 recon 盲区，不要重复同一个角度。

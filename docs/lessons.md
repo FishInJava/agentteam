@@ -3,6 +3,28 @@
 按时间倒序，记录 ateam 自身演进中值得永久保留的教训。板子（`.ateam/`）是生成物不入库，
 因此产品级教训必须落到本文件。
 
+## 2026-11-10 晚 — Worker skill 路由（存量 skill 进 mission）
+
+### 机制
+
+- `board.py intent add --skills`（逗号分隔的文件路径 / 宿主 skill 名）→ `mission render` 在
+  Angle 之后输出 `## Skills (load before working)`：相对路径按项目根解析成**绝对路径**（与 cwd /
+  worktree 无关），文件不存在 stderr 警告；宿主 skill 名原样透传、注明优先 Skill 工具；段末固定规则：
+  只加载列出的、mission constraints 优先、只取相关部分并计入预算。
+- 军规：侦察盘点 `.claude/skills`、`.agents/skills`、`.qoder/skills` 与 `CLAUDE.md`/`AGENTS.md` 约定；
+  派单按切片域选 0–2 个经 `--skills` 传入；ateam 自身 start/continue/finish 不派给 Worker；外部 skill
+  先审再路由。
+- 端到端验证法：仓库外放一个 nonce skill（含唯一令牌），把验证 Worker 的 mission 经 `--skills` 路由它；
+  报告必须回传 nonce 并说明读取路径——证明 Worker「真读了」而不仅是「mission 渲染了路径」。
+- 边界：0–2 上限仅是军规不作 CLI 强制；`path.exists()` 会让目录静默通过（建议 `is_file()` + warn）；
+  逗号分隔无法表达含逗号的路径。
+
+### worktree 基线
+
+- 实测 Agent `isolation: "worktree"` 基于**会话启动时的 HEAD**（本次为 origin/main `4e3167d`），
+  不是派单时 main 的最新提交。Leader 有新提交时分支会落后：收尾必须普通 merge（非 ff），合并后重跑
+  smoke 再验收；若 Worker 必须看到新提交，改用主工作区或先手动建新 worktree。
+
 ## 2026-11-10 晚 — init 同名文件 fail-fast（默认停止）
 
 ### 行为矩阵
