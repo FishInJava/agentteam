@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -155,6 +157,89 @@ def find_entity(ateam: Path, kind: str, entity_id: str) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
+# -- color / width -----------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_ANSI_CODES = {"red": "31", "green": "32", "yellow": "33", "dim": "2", "bold": "1"}
+
+STATUS_COLORS = {
+    "verified": "green",
+    "done": "green",
+    "blocked": "red",
+    "help": "red",
+    "failed": "red",
+    "running": "yellow",
+    "dispatched": "yellow",
+}
+
+
+def _enable_windows_vt() -> None:
+    """Best-effort ANSI support for legacy Windows consoles; silent fallback."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+
+
+def color_enabled(stream=None) -> bool:
+    """ANSI is used only on a TTY with NO_COLOR unset (and TERM != dumb)."""
+    if "NO_COLOR" in os.environ:
+        return False
+    if os.environ.get("TERM") == "dumb":
+        return False
+    stream = stream if stream is not None else sys.stdout
+    try:
+        if not stream.isatty():
+            return False
+    except Exception:
+        return False
+    _enable_windows_vt()
+    return True
+
+
+def paint(text: Any, color: Optional[str] = None) -> str:
+    value = "" if text is None else str(text)
+    code = _ANSI_CODES.get(color or "")
+    if code is None or not color_enabled():
+        return value
+    return f"\x1b[{code}m{value}\x1b[0m"
+
+
+def status_color(status: Any) -> Optional[str]:
+    return STATUS_COLORS.get(str(status or "").strip().lower())
+
+
+def paint_status(status: Any) -> str:
+    return paint(status, status_color(status))
+
+
+def strip_ansi(text: Any) -> str:
+    return _ANSI_RE.sub("", str(text or ""))
+
+
+def display_width(text: Any) -> int:
+    """Terminal cell width: East Asian wide/full chars count as 2, ANSI ignored."""
+    width = 0
+    for ch in strip_ansi(text):
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def pad_display(text: Any, width: int) -> str:
+    value = str(text or "")
+    return value + " " * max(0, width - display_width(value))
+
+
 # -- summary -----------------------------------------------------------------
 
 def board_summary(ateam: Path) -> dict:
@@ -199,14 +284,34 @@ def board_summary(ateam: Path) -> dict:
     }
 
 
-def _short(text: Any, limit: int = 120) -> str:
+def _short(text: Any, limit: Optional[int] = None, verbose: bool = False) -> str:
+    """Collapse whitespace; fold long text with an explicit marker (never a silent cut)."""
     value = " ".join(str(text or "").split())
-    if len(value) <= limit:
+    if verbose or limit is None or display_width(value) <= limit:
         return value
-    return value[: limit - 1] + "…"
+    kept: list = []
+    used = 0
+    for ch in value:
+        step = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if used + step > limit:
+            break
+        kept.append(ch)
+        used += step
+    remaining = len(value) - len(kept)
+    if remaining <= 0:
+        return value
+    return "".join(kept) + f" …(+{remaining} chars; --verbose)"
 
 
-def render_summary_text(summary: dict) -> str:
+def progress_bar(done: int, total: int, width: int = 20) -> str:
+    if total <= 0:
+        filled = 0
+    else:
+        filled = int(round(width * max(0, min(done, total)) / total))
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def render_summary_text(summary: dict, verbose: bool = False) -> str:
     lines: list = []
     project = summary.get("project")
     phase = summary.get("phase", "no_project")
@@ -220,13 +325,36 @@ def render_summary_text(summary: dict) -> str:
 
     budget = project.get("budget") or {}
     consumed = summary.get("consumption") or {}
+    facts = summary.get("facts") or []
+    intents = summary.get("intents") or []
+    open_intents = summary.get("open_intents") or []
+    acceptance = summary.get("acceptance") or []
+    verified = sum(1 for item in acceptance if item.get("status") == "verified")
+    counts = summary.get("acceptance_counts") or {}
+    breakdown = ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "none"
+
     lines.append(f"# ateam board — {project.get('title', '(untitled)')}")
     lines.append("")
     lines.append(f"Phase: {phase}")
+    lines.append(
+        "Acceptance: {bar} {verified}/{total} verified ({breakdown})".format(
+            bar=progress_bar(verified, len(acceptance)),
+            verified=verified,
+            total=len(acceptance),
+            breakdown=breakdown,
+        )
+    )
+    lines.append(
+        "Board: facts {facts} | intents {intents} | open intents {open_}".format(
+            facts=len(facts),
+            intents=len(intents),
+            open_=len(open_intents),
+        )
+    )
     if project.get("origin"):
-        lines.append(f"Origin: {_short(project.get('origin'), 160)}")
+        lines.append(f"Origin: {_short(project.get('origin'), 160, verbose)}")
     if project.get("goal"):
-        lines.append(f"Goal: {_short(project.get('goal'), 160)}")
+        lines.append(f"Goal: {_short(project.get('goal'), 160, verbose)}")
     lines.append(
         "Budget: tokens {used}/{total}; seconds {sused}/{stotal}; deadline {deadline}".format(
             used=consumed.get("tokens", 0),
@@ -236,21 +364,21 @@ def render_summary_text(summary: dict) -> str:
             deadline=budget.get("deadline_at") or "none",
         )
     )
-    counts = summary.get("acceptance_counts") or {}
-    lines.append(
-        "Acceptance: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "none")
-    )
 
-    facts = summary.get("facts") or []
     lines.append("")
     lines.append(f"## Facts ({len(facts)})")
     if not facts:
         lines.append("- none")
     else:
         for fact in facts:
-            lines.append(f"- [{fact.get('id')}] {fact.get('kind', 'note')} — {_short(fact.get('title'), 100)}")
+            lines.append(
+                "- [{id}] {kind} — {title}".format(
+                    id=fact.get("id"),
+                    kind=fact.get("kind", "note"),
+                    title=_short(fact.get("title"), 100, verbose),
+                )
+            )
 
-    open_intents = summary.get("open_intents") or []
     lines.append("")
     lines.append(f"## Open intents ({len(open_intents)})")
     if not open_intents:
@@ -262,7 +390,7 @@ def render_summary_text(summary: dict) -> str:
                     id=intent.get("id"),
                     task=intent.get("task_type", "?"),
                     worker=intent.get("worker") or "-",
-                    status=intent.get("status"),
+                    status=paint_status(intent.get("status")),
                     since=intent.get("dispatched_at") or intent.get("created_at") or "-",
                 )
             )
@@ -273,17 +401,26 @@ def render_summary_text(summary: dict) -> str:
         lines.append(f"## Needs Leader attention ({len(attention)})")
         for intent in attention:
             lines.append(
-                f"- [{intent.get('id')}] status={intent.get('status')} worker={intent.get('worker') or '-'}"
+                "- [{id}] status={status} worker={worker}".format(
+                    id=intent.get("id"),
+                    status=paint_status(intent.get("status")),
+                    worker=intent.get("worker") or "-",
+                )
             )
 
-    acceptance = summary.get("acceptance") or []
     lines.append("")
     lines.append(f"## Acceptance ledger ({len(acceptance)})")
     if not acceptance:
         lines.append("- none")
     else:
         for item in acceptance:
-            lines.append(f"- [{item.get('id')}] {item.get('status', 'recorded')} — {_short(item.get('criterion'), 100)}")
+            lines.append(
+                "- [{id}] {status} — {criterion}".format(
+                    id=item.get("id"),
+                    status=paint_status(item.get("status", "recorded")),
+                    criterion=_short(item.get("criterion"), 100, verbose),
+                )
+            )
 
     hints = summary.get("hints") or []
     if hints:
@@ -291,17 +428,17 @@ def render_summary_text(summary: dict) -> str:
         lines.append(f"## Hints ({len(hints)})")
         recent = hints[-5:]
         for hint in recent:
-            lines.append(f"- [{hint.get('id')}] {_short(hint.get('content'), 140)}")
+            lines.append(f"- [{hint.get('id')}] {_short(hint.get('content'), 140, verbose)}")
 
     state = summary.get("leader_state") or {}
     lines.append("")
     lines.append("## Leader state")
     lines.append(f"phase: {state.get('phase') or phase}")
     if state.get("next_action"):
-        lines.append(f"next: {_short(state.get('next_action'), 160)}")
+        lines.append(f"next: {_short(state.get('next_action'), 160, verbose)}")
     if state.get("recent_decisions"):
         decisions = state.get("recent_decisions") or []
-        lines.append("recent decisions: " + "; ".join(_short(d, 60) for d in decisions[-3:]))
+        lines.append("recent decisions: " + "; ".join(_short(d, 60, verbose) for d in decisions[-3:]))
     lines.append(f"handover: {state.get('handover_doc') or '.ateam/workspace/handover.md'}")
 
     return "\n".join(lines)

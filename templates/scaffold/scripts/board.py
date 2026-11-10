@@ -164,8 +164,15 @@ def cmd_fact_list(args, ateam: Path) -> int:
     if args.json:
         print(json.dumps(facts, ensure_ascii=False, indent=2))
         return 0
+    verbose = getattr(args, "verbose", False)
+    rows = []
     for fact in facts:
-        print(f"[{fact['id']}] {fact.get('kind', 'note')} — {fact.get('title', '')}")
+        content = common_text(fact.get("title", ""))
+        if verbose and fact.get("description"):
+            content = f"{content} — {common_text(fact.get('description'))}"
+        rows.append((str(fact.get("id", "")), str(fact.get("kind", "note")), content))
+    for line in _render_status_rows(rows):
+        print(line)
     return 0
 
 
@@ -214,23 +221,55 @@ def cmd_intent_list(args, ateam: Path) -> int:
     if args.json:
         print(json.dumps(intents, ensure_ascii=False, indent=2))
         return 0
+    verbose = getattr(args, "verbose", False)
+    rows = []
     for intent in intents:
-        print(
-            "[{id}] {task} {status} worker={worker} from={frm} — {desc}".format(
-                id=intent.get("id"),
-                task=intent.get("task_type"),
-                status=intent.get("status"),
-                worker=intent.get("worker") or "-",
-                frm=",".join(intent.get("from") or []) or "-",
-                desc=common_text(intent.get("description")),
-            )
+        content = "{task} worker={worker} from={frm} — {desc}".format(
+            task=intent.get("task_type"),
+            worker=intent.get("worker") or "-",
+            frm=",".join(intent.get("from") or []) or "-",
+            desc=common_text(intent.get("description")),
         )
+        if verbose:
+            extras = []
+            if intent.get("angle"):
+                extras.append(f"angle={common_text(intent.get('angle'))}")
+            if intent.get("acceptance"):
+                extras.append("acceptance=" + " | ".join(str(a) for a in intent.get("acceptance")))
+            if intent.get("mission_ref"):
+                extras.append(f"mission_ref={intent.get('mission_ref')}")
+            if extras:
+                content += " (" + "; ".join(extras) + ")"
+        rows.append((str(intent.get("id", "")), str(intent.get("status") or "-"), content))
+    for line in _render_status_rows(rows):
+        print(line)
     return 0
 
 
-def common_text(value, limit: int = 80) -> str:
-    text = " ".join(str(value or "").split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+def common_text(value) -> str:
+    """Collapse whitespace without hard truncating: list text is shown in full."""
+    return " ".join(str(value or "").split())
+
+
+def _render_status_rows(rows) -> list:
+    """Render (id, status, content) rows as two aligned, colored columns."""
+    if not rows:
+        return []
+    id_width = max(common.display_width(row[0]) for row in rows)
+    status_width = max(common.display_width(row[1]) for row in rows)
+    lines = []
+    for ident, status, content in rows:
+        plain_status = str(status or "")
+        lines.append(
+            "{ident}{id_pad}  {status}{status_pad}  {content}".format(
+                ident=ident,
+                id_pad=" " * max(0, id_width - common.display_width(ident)),
+                status=common.paint_status(plain_status),
+                status_pad=" " * max(0, status_width - common.display_width(plain_status)),
+                content=content,
+            )
+        )
+    return lines
 
 
 def _get_intent(ateam: Path, intent_id: str) -> dict:
@@ -403,8 +442,27 @@ def cmd_acceptance_list(args, ateam: Path) -> int:
     if args.json:
         print(json.dumps(items, ensure_ascii=False, indent=2))
         return 0
+    verbose = getattr(args, "verbose", False)
+    rows = []
     for item in items:
-        print(f"[{item['id']}] {item.get('status')} — {common_text(item.get('criterion'))}")
+        content = common_text(item.get("criterion"))
+        if verbose:
+            extras = []
+            if item.get("source"):
+                extras.append(f"source={common_text(item.get('source'))}")
+            if item.get("evidence_fact"):
+                extras.append(f"evidence={item.get('evidence_fact')}")
+            if item.get("verified_by"):
+                extras.append(f"verified_by={item.get('verified_by')}")
+            if item.get("pr_ref"):
+                extras.append(f"pr={item.get('pr_ref')}")
+            if item.get("note"):
+                extras.append(f"note={common_text(item.get('note'))}")
+            if extras:
+                content += " (" + "; ".join(extras) + ")"
+        rows.append((str(item.get("id", "")), str(item.get("status", "recorded")), content))
+    for line in _render_status_rows(rows):
+        print(line)
     return 0
 
 
@@ -460,8 +518,15 @@ def cmd_hint_list(args, ateam: Path) -> int:
     if args.json:
         print(json.dumps(hints, ensure_ascii=False, indent=2))
         return 0
+    verbose = getattr(args, "verbose", False)
+    rows = []
     for hint in hints:
-        print(f"[{hint['id']}] {hint.get('creator', 'human')}: {common_text(hint.get('content'), 160)}")
+        content = common_text(hint.get("content"))
+        if verbose and hint.get("created_at"):
+            content += f" ({hint.get('created_at')})"
+        rows.append((str(hint.get("id", "")), str(hint.get("creator", "human")), content))
+    for line in _render_status_rows(rows):
+        print(line)
     return 0
 
 
@@ -509,7 +574,7 @@ def cmd_summary(args, ateam: Path) -> int:
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
-        print(common.render_summary_text(summary))
+        print(common.render_summary_text(summary, verbose=getattr(args, "verbose", False)))
     return 0
 
 
@@ -557,6 +622,7 @@ def build_parser() -> argparse.ArgumentParser:
     f_list = fact_sub.add_parser("list", help="list facts")
     f_list.add_argument("--kind", default=None)
     f_list.add_argument("--json", action="store_true")
+    f_list.add_argument("--verbose", action="store_true", help="show descriptions in full")
     f_list.set_defaults(func=cmd_fact_list)
 
     intent = sub.add_parser("intent", help="intents (work items)")
@@ -576,6 +642,7 @@ def build_parser() -> argparse.ArgumentParser:
     i_list = intent_sub.add_parser("list", help="list intents")
     i_list.add_argument("--status", default=None)
     i_list.add_argument("--json", action="store_true")
+    i_list.add_argument("--verbose", action="store_true", help="show angle/acceptance/mission details")
     i_list.set_defaults(func=cmd_intent_list)
 
     i_dispatch = intent_sub.add_parser("dispatch", help="assign an intent to a worker")
@@ -614,6 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     a_list = acceptance_sub.add_parser("list", help="list acceptance criteria")
     a_list.add_argument("--status", default=None)
     a_list.add_argument("--json", action="store_true")
+    a_list.add_argument("--verbose", action="store_true", help="show source/evidence/verifier details")
     a_list.set_defaults(func=cmd_acceptance_list)
 
     a_verify = acceptance_sub.add_parser("verify", help="mark verified from an independent verify mission")
@@ -637,6 +705,7 @@ def build_parser() -> argparse.ArgumentParser:
     h_add.set_defaults(func=cmd_hint_add)
     h_list = hint_sub.add_parser("list", help="list hints")
     h_list.add_argument("--json", action="store_true")
+    h_list.add_argument("--verbose", action="store_true", help="show timestamps")
     h_list.set_defaults(func=cmd_hint_list)
 
     handover = sub.add_parser("handover", help="Leader self-memory")
@@ -661,6 +730,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     summary = sub.add_parser("summary", help="print the board summary")
     summary.add_argument("--json", action="store_true")
+    summary.add_argument("--verbose", action="store_true", help="do not fold long text")
     summary.set_defaults(func=cmd_summary)
 
     return parser
