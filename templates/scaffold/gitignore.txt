@@ -1,0 +1,4 @@
+# 本机开发者身份
+.developer
+# 模板版本簿记
+.template-hashes.json

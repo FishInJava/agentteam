@@ -1,0 +1,30 @@
+{
+  "name": "ateam",
+  "version": "0.1.0",
+  "description": "Installable multi-agent development scaffold (Leader / Workers). Run `ateam init` in any repo to add the board, doctrine, scripts, and host integration.",
+  "type": "module",
+  "bin": {
+    "ateam": "./bin/ateam.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "smoke": "node test/smoke.mjs"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "workflow",
+    "scaffold",
+    "cli",
+    "ateam"
+  ],
+  "license": "MIT"
+}

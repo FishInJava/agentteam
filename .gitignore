@@ -1,0 +1,14 @@
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+
+Cairn-main
+sapper-v2-master
+
+# ateam init 生成物（不提交，clone 后本地执行 npm link && ateam init）
+.ateam/
+.agents/
+.claude/
+.codex/
+.qoder/

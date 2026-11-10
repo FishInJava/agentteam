@@ -1,0 +1,10 @@
+{
+  "model_tiers": {
+    "flagship": "set the strongest model in your host here",
+    "standard": "",
+    "fast": ""
+  },
+  "prompt_injection": {
+    "skip_keyword": "no-ateam"
+  }
+}

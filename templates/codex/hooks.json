@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{PYTHON_CMD}} -X utf8 .ateam/scripts/hook_breadcrumb.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{PYTHON_CMD}} -X utf8 .ateam/scripts/hook_worker.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
